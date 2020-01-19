@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require 'json'
 require 'cgi'
+require 'set'
 
 module PorchParcel
   Parcel = Struct.new(:id, :width, :height)
@@ -9,11 +10,18 @@ module PorchParcel
 
   def validate!(data)
     raise ArgumentError, 'input must be an object' unless data.is_a?(Hash)
-    sw, sh, parcels = data['shelf_width'], data['shelf_height'], data['parcels']
+    sw, sh, parcels, blocked = data['shelf_width'], data['shelf_height'], data['parcels'], data.fetch('blocked', [])
     integer = ->(v) { v.is_a?(Integer) && !v.is_a?(TrueClass) && !v.is_a?(FalseClass) }
     raise ArgumentError, 'shelf dimensions must be integers' unless integer.call(sw) && integer.call(sh)
     raise ArgumentError, 'shelf dimensions must be 1..40 by 1..20' unless sw.between?(1, 40) && sh.between?(1, 20)
     raise ArgumentError, 'parcels must be an array of at most 30 items' unless parcels.is_a?(Array) && parcels.length <= 30
+    raise ArgumentError, 'blocked must be an array' unless blocked.is_a?(Array)
+    blocked_seen = []
+    blocked.each do |cell|
+      raise ArgumentError, 'blocked cells must have integer x and y' unless cell.is_a?(Hash) && integer.call(cell['x']) && integer.call(cell['y'])
+      raise ArgumentError, 'blocked cell is outside shelf' unless cell['x'].between?(0, sw - 1) && cell['y'].between?(0, sh - 1)
+      key = [cell['x'], cell['y']]; raise ArgumentError, 'blocked cells must be unique' if blocked_seen.include?(key); blocked_seen << key
+    end
     ids = []
     parcels.each do |item|
       raise ArgumentError, 'each parcel must be an object' unless item.is_a?(Hash)
@@ -31,6 +39,8 @@ module PorchParcel
     validate!(data)
     raise ArgumentError, 'strategy must be first-fit or area' unless %w[first-fit area].include?(strategy)
     shelf = Array.new(data['shelf_height']) { Array.new(data['shelf_width']) }
+    blocked_coords = data.fetch('blocked', []).map { |cell| [cell['x'], cell['y']] }
+    blocked = blocked_coords.to_set
     placed = []; unplaced = []
     parcels = data['parcels'].each_with_index.sort_by { |raw, index| strategy == 'area' ? [-(raw['width'] * raw['height']), index] : [index, index] }.map(&:first)
     parcels.each do |raw|
@@ -40,8 +50,8 @@ module PorchParcel
         (0...data['shelf_width']).each do |x|
           [[parcel.width, parcel.height, false], [parcel.height, parcel.width, true]].take(rotate ? 2 : 1).each do |width, height, rotated|
             next if x + width > data['shelf_width'] || y + height > data['shelf_height']
-            cells = (y...(y + height)).flat_map { |row| (x...(x + width)).map { |col| shelf[row][col] } }
-            if cells.all?(&:nil?)
+            cells = (y...(y + height)).flat_map { |row| (x...(x + width)).map { |col| [shelf[row][col], blocked.include?([col, row])] } }
+            if cells.all? { |value, is_blocked| value.nil? && !is_blocked }
               found = [x, y, width, height, rotated]; break
             end
           end
@@ -56,7 +66,7 @@ module PorchParcel
         unplaced << parcel.id
       end
     end
-    { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, placed: placed, unplaced: unplaced, strategy: strategy }
+    { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, blocked: blocked_coords, placed: placed, unplaced: unplaced, strategy: strategy }
   end
 
   def render(result, output = $stdout, show_orientation: false)
@@ -65,20 +75,29 @@ module PorchParcel
     placements = result[:placed].map { |p| show_orientation ? "#{p.parcel.id}@#{p.x},#{p.y}(#{p.width}x#{p.height}#{p.rotated ? ',rotated' : ''})" : "#{p.parcel.id}@#{p.x},#{p.y}" }
     output.puts "Placed: #{placements.join(' ')}"
     output.puts "Unplaced: #{result[:unplaced].empty? ? 'none' : result[:unplaced].join(', ')}"
+    unless result[:blocked].empty?
+      usable = result[:shelf_width] * result[:shelf_height] - result[:blocked].length
+      output.puts "Blocked: #{result[:blocked].length} cell(s); usable area: #{usable}"
+    end
   end
 
   def html(result, show_orientation: true)
     esc = ->(text) { CGI.escapeHTML(text.to_s) }
     total = result[:shelf_width] * result[:shelf_height]
     occupied = result[:placed].sum { |p| p.width * p.height }
-    strategy_tag = "<span class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])}</span>"
+    usable = total - result[:blocked].length
+    strategy_tag = "<p class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])} · Usable area: #{usable}</p>"
     parcels = result[:placed].map.with_index do |p, index|
       label = "#{esc.call(p.parcel.id)} · #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}"
       "<div class=\"parcel\" aria-label=\"#{label}\" style=\"left:#{p.x * 100.0 / result[:shelf_width]}%;top:#{p.y * 100.0 / result[:shelf_height]}%;width:#{p.width * 100.0 / result[:shelf_width]}%;height:#{p.height * 100.0 / result[:shelf_height]}%\"><span>#{index + 1}</span></div>"
     end.join
+    blocked_cells = result[:blocked].map do |x, y|
+      "<div class=\"blocked\" role=\"img\" aria-label=\"Blocked shelf cell at #{x},#{y}\" style=\"position:absolute;left:#{x * 100.0 / result[:shelf_width]}%;top:#{y * 100.0 / result[:shelf_height]}%;width:#{100.0 / result[:shelf_width]}%;height:#{100.0 / result[:shelf_height]}%;background:repeating-linear-gradient(45deg,#6e5c4d 0 3px,#aa927c 3px 6px);border:1px solid #3f3027;box-sizing:border-box\"></div>"
+    end.join
+    parcels = blocked_cells + parcels
     legend = result[:placed].map.with_index { |p, index| "<li><b>#{index + 1}. #{esc.call(p.parcel.id)}</b> #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''} at #{p.x},#{p.y}</li>" }.join
     unplaced = result[:unplaced].empty? ? '<li>none</li>' : result[:unplaced].map { |id| "<li>#{esc.call(id)}</li>" }.join
-    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Porch Parcel shelf</title><style>#{html_css(result[:shelf_width], result[:shelf_height])}</style></head><body><main><p class=\"eyebrow\">OFFLINE DELIVERY DESK · 2020</p><h1>Porch Parcel</h1><p class=\"lede\">A calm little shelf plan for a chaotic little porch.</p><section class=\"stats\"><div><b>#{occupied}</b><span>occupied area</span></div><div><b>#{total}</b><span>total area</span></div><div><b>#{result[:placed].length}</b><span>placed</span></div></section><section class=\"shelf\" aria-label=\"#{result[:shelf_width]} by #{result[:shelf_height]} shelf\">#{parcels}</section><section class=\"legend\"><h2>Parcel legend</h2>#{strategy_tag}<ul>#{legend}</ul></section><section class=\"unplaced\"><h2>Still on the porch</h2><ul>#{unplaced}</ul></section><footer>Created retrospectively in September 2026 · fictional 2020-inspired project</footer></main></body></html>"
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Porch Parcel shelf</title><style>#{html_css(result[:shelf_width], result[:shelf_height])}</style></head><body><main><p class=\"eyebrow\">OFFLINE DELIVERY DESK · 2020</p><h1>Porch Parcel</h1><p class=\"lede\">A calm little shelf plan for a chaotic little porch.</p><section class=\"stats\"><div><b>#{occupied}</b><span>occupied area</span></div><div><b>#{total}</b><span>total area</span></div><div><b>#{usable}</b><span>usable area</span></div><div><b>#{result[:placed].length}</b><span>placed</span></div></section><section class=\"shelf\" aria-label=\"#{result[:shelf_width]} by #{result[:shelf_height]} shelf\">#{parcels}</section><section class=\"legend\"><h2>Parcel legend</h2>#{strategy_tag}<ul>#{legend}</ul></section><section class=\"unplaced\"><h2>Still on the porch</h2><ul>#{unplaced}</ul></section><footer>Created retrospectively in September 2026 · fictional 2020-inspired project</footer></main></body></html>"
   end
 
   def html_css(width, height)

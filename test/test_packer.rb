@@ -1,6 +1,7 @@
 require 'minitest/autorun'
 require 'json'
 require 'tmpdir'
+require 'stringio'
 require_relative '../app/packer'
 
 class PorchParcelTest < Minitest::Test
@@ -53,6 +54,40 @@ class PorchParcelTest < Minitest::Test
   def test_unplaced_when_no_rectangle_remains
     result = PorchParcel.pack('shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'A', 'width' => 2, 'height' => 2}, {'id' => 'B', 'width' => 2, 'height' => 1}])
     assert_equal ['B'], result[:unplaced]
+  end
+  def test_blocked_cells_reduce_capacity_and_are_reported_in_html
+    data = {'shelf_width' => 2, 'shelf_height' => 2, 'blocked' => [{'x' => 1, 'y' => 0}], 'parcels' => [{'id' => 'A', 'width' => 2, 'height' => 2}]}
+    result = PorchParcel.pack(data)
+    assert_equal [[1, 0]], result[:blocked]
+    assert_equal ['A'], result[:unplaced]
+    page = PorchParcel.html(result)
+    assert_includes page, 'usable area'
+    assert_includes page, 'Usable area: 3'
+    assert_includes page, 'Blocked shelf cell at 1,0'
+    assert_includes page, 'repeating-linear-gradient'
+    assert_includes page, 'position:absolute'
+    output = StringIO.new
+    PorchParcel.render(result, output)
+    assert_includes output.string, 'Blocked: 1 cell(s); usable area: 3'
+  end
+  def test_unblocked_cli_render_keeps_original_summary_shape
+    result = PorchParcel.pack('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [])
+    output = StringIO.new
+    PorchParcel.render(result, output)
+    refute_includes output.string, 'Blocked:'
+  end
+  def test_rotation_can_fit_around_blocked_cell
+    data = {'shelf_width' => 3, 'shelf_height' => 3, 'blocked' => [{'x' => 0, 'y' => 0}, {'x' => 1, 'y' => 0}], 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}
+    result = PorchParcel.pack(data, rotate: true)
+    assert_equal ['turn'], result[:placed].map { |p| p.parcel.id }
+    assert result[:placed][0].rotated
+    refute_equal [0, 0], [result[:placed][0].x, result[:placed][0].y]
+  end
+  def test_blocked_schema_rejects_duplicates_and_out_of_bounds
+    base = {'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => []}
+    assert_raises(ArgumentError) { PorchParcel.pack(base.merge('blocked' => [{'x' => 1, 'y' => 1}, {'x' => 1, 'y' => 1}])) }
+    assert_raises(ArgumentError) { PorchParcel.pack(base.merge('blocked' => [{'x' => 3, 'y' => 0}])) }
+    assert_raises(ArgumentError) { PorchParcel.pack(base.merge('blocked' => [{'x' => 1.0, 'y' => 0}])) }
   end
   def test_malformed_schema_is_rejected
     bad = {'shelf_width' => 4, 'shelf_height' => 2, 'parcels' => [{'id' => 'x', 'width' => 1, 'height' => 1}, {'id' => 'x', 'width' => 1, 'height' => 1}]}
