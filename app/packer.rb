@@ -81,6 +81,21 @@ module PorchParcel
     end
   end
 
+  def render_json(result, output = $stdout)
+    total = result[:shelf_width] * result[:shelf_height]
+    payload = {
+      'shelf_width' => result[:shelf_width],
+      'shelf_height' => result[:shelf_height],
+      'strategy' => result[:strategy],
+      'blocked' => result[:blocked].map { |x, y| {'x' => x, 'y' => y} },
+      'placed' => result[:placed].map { |p| {'id' => p.parcel.id, 'x' => p.x, 'y' => p.y, 'width' => p.width, 'height' => p.height, 'rotated' => p.rotated} },
+      'unplaced' => result[:unplaced],
+      'occupied_area' => result[:placed].sum { |p| p.width * p.height },
+      'usable_area' => total - result[:blocked].length
+    }
+    output.puts JSON.generate(payload)
+  end
+
   def html(result, show_orientation: true)
     esc = ->(text) { CGI.escapeHTML(text.to_s) }
     total = result[:shelf_width] * result[:shelf_height]
@@ -115,7 +130,7 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); force = !!args.delete('--force'); strategy = 'first-fit'; html_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); force = !!args.delete('--force'); strategy = 'first-fit'; html_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
     end
@@ -128,7 +143,11 @@ if $PROGRAM_NAME == __FILE__
     raise ArgumentError, 'input file exceeds 1 MiB' if File.size(path) > 1024 * 1024
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
     result = PorchParcel.pack(data, rotate: rotate, strategy: strategy)
-    PorchParcel.render(result, $stdout, show_orientation: show)
+    if json
+      PorchParcel.render_json(result, $stdout)
+    else
+      PorchParcel.render(result, $stdout, show_orientation: show)
+    end
     if html_path
       raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force
       PorchParcel.write_html(html_path, PorchParcel.html(result), force: force)

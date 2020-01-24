@@ -76,6 +76,32 @@ class PorchParcelTest < Minitest::Test
     PorchParcel.render(result, output)
     refute_includes output.string, 'Blocked:'
   end
+  def test_json_render_is_deterministic_and_contains_placement_geometry
+    result = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}, rotate: true)
+    output = StringIO.new
+    PorchParcel.render_json(result, output)
+    payload = JSON.parse(output.string)
+    assert_equal %w[shelf_width shelf_height strategy blocked placed unplaced occupied_area usable_area], payload.keys
+    assert_equal [], payload['blocked']
+    assert_equal ['turn'], payload['placed'].map { |p| p['id'] }
+    assert_equal true, payload['placed'][0]['rotated']
+    assert_equal 6, payload['occupied_area']
+    assert_equal 6, payload['usable_area']
+  end
+  def test_cli_json_stdout_is_parseable_and_errors_stay_on_stderr
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json')
+      File.write(input, JSON.generate('shelf_width' => 2, 'shelf_height' => 2, 'blocked' => [{'x' => 1, 'y' => 0}], 'parcels' => [{'id' => 'box', 'width' => 1, 'height' => 1}]))
+      script = File.expand_path('../app/packer.rb', __dir__)
+      stdout = `ruby #{script} --json #{input}`
+      payload = JSON.parse(stdout)
+      assert_equal 2, payload['shelf_width']
+      assert_equal 'box', payload['placed'][0]['id']
+      error = `ruby #{script} --json #{dir}/missing.json 2>&1`
+      assert_includes error, 'Input error'
+      refute_includes error, '{"shelf_width"'
+    end
+  end
   def test_rotation_can_fit_around_blocked_cell
     data = {'shelf_width' => 3, 'shelf_height' => 3, 'blocked' => [{'x' => 0, 'y' => 0}, {'x' => 1, 'y' => 0}], 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}
     result = PorchParcel.pack(data, rotate: true)
