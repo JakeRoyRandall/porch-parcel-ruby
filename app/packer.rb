@@ -130,6 +130,38 @@ module PorchParcel
     output.puts JSON.generate(payload)
   end
 
+  def compare(data, rotate: false, margin: 0)
+    %w[first-fit area best-fit].to_h { |strategy| [strategy, pack(data, rotate: rotate, strategy: strategy, margin: margin)] }
+  end
+
+  def render_compare(results, output = $stdout)
+    output.puts "PORCH PARCEL // strategy comparison"
+    output.puts "strategy\toccupied\tplaced\tunused-usable\tunplaced"
+    results.each do |strategy, result|
+      occupied = result[:placed].sum { |p| p.width * p.height }
+      unused = result[:shelf_width] * result[:shelf_height] - result[:blocked].length - occupied
+      output.puts "#{strategy}\t#{occupied}\t#{result[:placed].length}\t#{unused}\t#{result[:unplaced].empty? ? 'none' : result[:unplaced].join(',')}"
+    end
+  end
+
+  def render_compare_json(results, output = $stdout)
+    payload = results.to_h do |strategy, result|
+      occupied = result[:placed].sum { |p| p.width * p.height }
+      [strategy, {'occupied_area' => occupied, 'placed_count' => result[:placed].length, 'unused_usable_area' => result[:shelf_width] * result[:shelf_height] - result[:blocked].length - occupied, 'unplaced' => result[:unplaced]}]
+    end
+    output.puts JSON.generate('schema_version' => 1, 'comparison' => payload)
+  end
+
+  def html_compare(results)
+    panels = results.map do |strategy, result|
+      doc = html(result); shelf = doc[/<section class="shelf".*?<\/section>/m]; legend = doc[/<section class="legend".*?<\/section>/m]
+      occupied = result[:placed].sum { |p| p.width * p.height }; unused = result[:shelf_width] * result[:shelf_height] - result[:blocked].length - occupied
+      unplaced = result[:unplaced].empty? ? 'none' : result[:unplaced].map { |id| CGI.escapeHTML(id) }.join(', ')
+      "<article class=\"compare-panel\"><h2>#{CGI.escapeHTML(strategy)}</h2><p>Occupied #{occupied} · placed #{result[:placed].length} · unused usable #{unused}</p>#{shelf}#{legend}<p class=\"unplaced-line\">Unplaced: #{unplaced}</p></article>"
+    end.join
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Porch Parcel strategy comparison</title><style>#{html_css(results.values.first[:shelf_width], results.values.first[:shelf_height])}.compare-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.compare-panel{background:#fffaf0;border:1px solid #dbc5a8;padding:16px}.compare-panel h2{margin-top:0;color:#ad5438}.compare-panel .shelf{box-shadow:none}.unplaced-line{font:12px monospace}@media(max-width:800px){.compare-panels{grid-template-columns:1fr}}</style></head><body><main><p class=\"eyebrow\">OFFLINE DELIVERY DESK · 2020</p><h1>Porch Parcel</h1><p class=\"lede\">Three ways to stack the same chaotic little porch.</p><section class=\"compare-panels\">#{panels}</section><footer>Created retrospectively in September 2026 · fictional 2020-inspired project</footer></main></body></html>"
+  end
+
   def html(result, show_orientation: true)
     esc = ->(text) { CGI.escapeHTML(text.to_s) }
     total = result[:shelf_width] * result[:shelf_height]
@@ -164,9 +196,10 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); force = !!args.delete('--force'); strategy = 'first-fit'; margin = 0; html_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; margin = 0; html_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
+      strategy_explicit = true
     end
     if (margin_index = args.index('--margin') )
       args.delete_at(margin_index); margin_text = args.delete_at(margin_index); raise ArgumentError, '--margin needs a value' unless margin_text
@@ -180,15 +213,18 @@ if $PROGRAM_NAME == __FILE__
     path = args.first
     raise ArgumentError, 'input file exceeds 1 MiB' if File.size(path) > 1024 * 1024
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
-    result = PorchParcel.pack(data, rotate: rotate, strategy: strategy, margin: margin)
-    if json
-      PorchParcel.render_json(result, $stdout)
+    raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
+    if compare_mode
+      results = PorchParcel.compare(data, rotate: rotate, margin: margin)
+      if json then PorchParcel.render_compare_json(results, $stdout) else PorchParcel.render_compare(results, $stdout) end
+      PorchParcel.write_html(html_path, PorchParcel.html_compare(results), force: force) if html_path
     else
-      PorchParcel.render(result, $stdout, show_orientation: show)
-    end
-    if html_path
-      raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force
-      PorchParcel.write_html(html_path, PorchParcel.html(result), force: force)
+      result = PorchParcel.pack(data, rotate: rotate, strategy: strategy, margin: margin)
+      if json then PorchParcel.render_json(result, $stdout) else PorchParcel.render(result, $stdout, show_orientation: show) end
+      if html_path
+        raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force
+        PorchParcel.write_html(html_path, PorchParcel.html(result), force: force)
+      end
     end
   rescue JSON::ParserError, Errno::ENOENT, SystemCallError => error
     warn "Input error: #{error.message}"; exit 2

@@ -208,4 +208,32 @@ class PorchParcelTest < Minitest::Test
       forced = `ruby #{script} --html #{output} --force #{input}`; assert File.file?(output); refute_includes forced, 'Traceback'
     end
   end
+  def test_compare_reports_all_strategies_and_metrics
+    data = {'shelf_width' => 5, 'shelf_height' => 4, 'parcels' => [
+      {'id' => 'a', 'width' => 1, 'height' => 1}, {'id' => 'b', 'width' => 1, 'height' => 2},
+      {'id' => 'c', 'width' => 4, 'height' => 3}, {'id' => 'd', 'width' => 1, 'height' => 3}
+    ]}
+    results = PorchParcel.compare(data)
+    assert_equal %w[first-fit area best-fit], results.keys
+    assert_equal 15, results['best-fit'][:placed].sum { |p| p.width * p.height }
+    report = StringIO.new; PorchParcel.render_compare(results, report)
+    assert_includes report.string, "strategy\toccupied\tplaced\tunused-usable\tunplaced"
+    assert_includes report.string, 'best-fit'
+    json = StringIO.new; PorchParcel.render_compare_json(results, json)
+    parsed = JSON.parse(json.string); assert_equal %w[first-fit area best-fit], parsed['comparison'].keys
+    assert_equal 15, parsed['comparison']['best-fit']['occupied_area']
+    page = PorchParcel.html_compare(results)
+    assert_equal 3, page.scan('class="compare-panel"').length
+    assert_includes page, 'best-fit'
+    rotated_page = PorchParcel.html_compare(PorchParcel.compare({'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}, rotate: true))
+    assert_includes rotated_page, 'turn'
+    assert_includes rotated_page, '3×2 · rotated'
+    assert_includes rotated_page, 'class="legend"'
+  end
+  def test_compare_zero_and_all_blocked_are_consistent
+    empty = PorchParcel.compare({'shelf_width' => 2, 'shelf_height' => 2, 'parcels' => []})
+    assert empty.values.all? { |r| r[:placed].empty? && r[:unplaced].empty? }
+    blocked = PorchParcel.compare({'shelf_width' => 2, 'shelf_height' => 2, 'blocked' => [{'x' => 0, 'y' => 0}, {'x' => 1, 'y' => 0}, {'x' => 0, 'y' => 1}, {'x' => 1, 'y' => 1}], 'parcels' => [{'id' => 'x', 'width' => 1, 'height' => 1}]})
+    assert blocked.values.all? { |r| r[:placed].empty? && r[:unplaced] == ['x'] }
+  end
 end
