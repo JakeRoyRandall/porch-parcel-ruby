@@ -62,6 +62,18 @@ class PorchParcelTest < Minitest::Test
     result = PorchParcel.pack(data, rotate: true)
     refute_empty result[:placed]; assert result[:placed][0].rotated; assert_equal [3, 2], [result[:placed][0].width, result[:placed][0].height]
   end
+  def test_rotation_lock_keeps_only_original_orientation
+    data = {'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'locked', 'width' => 2, 'height' => 3, 'rotatable' => false}]}
+    result = PorchParcel.pack(data, rotate: true)
+    assert_equal ['locked'], result[:unplaced]
+    assert_raises(ArgumentError) { PorchParcel.pack(data.merge('parcels' => [data['parcels'][0].merge('rotatable' => 'yes')]), rotate: true) }
+  end
+  def test_rotation_lock_is_reported_in_json_html_and_svg
+    result = PorchParcel.pack({'shelf_width' => 2, 'shelf_height' => 2, 'parcels' => [{'id' => 'locked', 'width' => 1, 'height' => 1, 'rotatable' => false}]})
+    assert_equal false, JSON.parse(StringIO.new.tap { |io| PorchParcel.render_json(result, io) }.string)['placed'][0]['rotatable']
+    assert_includes PorchParcel.html(result), 'rotation locked'
+    assert_includes PorchParcel.svg(result), 'rotation locked'
+  end
   def test_original_orientation_wins_tie
     result = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 3, 'parcels' => [{'id' => 'tie', 'width' => 2, 'height' => 2}]}, rotate: true)
     refute result[:placed][0].rotated

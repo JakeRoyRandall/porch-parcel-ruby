@@ -4,7 +4,7 @@ require 'cgi'
 require 'set'
 
 module PorchParcel
-  Parcel = Struct.new(:id, :width, :height)
+  Parcel = Struct.new(:id, :width, :height, :rotatable)
   Placement = Struct.new(:parcel, :x, :y, :width, :height, :rotated)
   module_function
 
@@ -30,6 +30,7 @@ module PorchParcel
       raise ArgumentError, 'parcel ids must be unique' if ids.include?(id)
       raise ArgumentError, 'parcel dimensions must be positive integers' unless integer.call(width) && integer.call(height) && width > 0 && height > 0
       raise ArgumentError, 'parcel dimensions must be at most 40x40' if width > 40 || height > 40
+      raise ArgumentError, 'rotatable must be boolean' if item.key?('rotatable') && ![true, false].include?(item['rotatable'])
       ids << id
     end
     true
@@ -46,11 +47,12 @@ module PorchParcel
     placed = []; unplaced = []
     parcels = data['parcels'].each_with_index.sort_by { |raw, index| strategy == 'area' ? [-(raw['width'] * raw['height']), index] : [index, index] }.map(&:first)
     parcels.each do |raw|
-      parcel = Parcel.new(raw['id'], raw['width'], raw['height']); found = nil; best_score = nil
+      parcel = Parcel.new(raw['id'], raw['width'], raw['height'], raw.fetch('rotatable', true)); found = nil; best_score = nil
       (0...data['shelf_height']).each do |y|
         break if found && strategy != 'best-fit'
         (0...data['shelf_width']).each do |x|
-          [[parcel.width, parcel.height, false], [parcel.height, parcel.width, true]].take(rotate ? 2 : 1).each do |width, height, rotated|
+          orientations = rotate && parcel.rotatable ? [[parcel.width, parcel.height, false], [parcel.height, parcel.width, true]] : [[parcel.width, parcel.height, false]]
+          orientations.each do |width, height, rotated|
             next if x + width > data['shelf_width'] || y + height > data['shelf_height']
             envelope_left = x - margin; envelope_top = y - margin
             envelope_right = x + width + margin; envelope_bottom = y + height + margin
@@ -122,7 +124,7 @@ module PorchParcel
       'strategy' => result[:strategy],
       'margin' => result[:margin],
       'blocked' => result[:blocked].map { |x, y| {'x' => x, 'y' => y} },
-      'placed' => result[:placed].map { |p| {'id' => p.parcel.id, 'x' => p.x, 'y' => p.y, 'width' => p.width, 'height' => p.height, 'rotated' => p.rotated} },
+      'placed' => result[:placed].map { |p| {'id' => p.parcel.id, 'x' => p.x, 'y' => p.y, 'width' => p.width, 'height' => p.height, 'rotated' => p.rotated, 'rotatable' => p.parcel.rotatable} },
       'unplaced' => result[:unplaced],
       'occupied_area' => result[:placed].sum { |p| p.width * p.height },
       'usable_area' => total - result[:blocked].length
@@ -167,7 +169,7 @@ module PorchParcel
     sw, sh = result[:shelf_width], result[:shelf_height]; pad = 2.0; occupied = result[:placed].sum { |p| p.width * p.height }; usable = sw * sh - result[:blocked].length; legend_lines = 2 + result[:placed].length + result[:unplaced].length; canvas_width = [sw + pad * 2, 24].max; canvas_height = sh + pad * 2 + legend_lines * 1.5
     blocked = result[:blocked].map { |x, y| "<rect class=\"blocked\" x=\"#{x + pad}\" y=\"#{y + pad}\" width=\"1\" height=\"1\" aria-label=\"Blocked shelf cell at #{x},#{y}\"/>" }.join
     parcels = result[:placed].map.with_index { |p, i| "<rect class=\"parcel\" x=\"#{p.x + pad}\" y=\"#{p.y + pad}\" width=\"#{p.width}\" height=\"#{p.height}\"/><text x=\"#{p.x + pad + p.width / 2.0}\" y=\"#{p.y + pad + p.height / 2.0}\" text-anchor=\"middle\" dominant-baseline=\"middle\">#{i + 1}</text>" }.join
-    legend = result[:placed].map.with_index { |p, i| "<text x=\"#{pad}\" y=\"#{sh + pad + 1.5 + i * 1.5}\">#{i + 1}. #{esc.call(p.parcel.id)} #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''} at #{p.x},#{p.y}</text>" }.join
+    legend = result[:placed].map.with_index { |p, i| "<text x=\"#{pad}\" y=\"#{sh + pad + 1.5 + i * 1.5}\">#{i + 1}. #{esc.call(p.parcel.id)} #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}#{p.parcel.rotatable ? '' : ' · rotation locked'} at #{p.x},#{p.y}</text>" }.join
     unplaced = result[:unplaced].map.with_index { |id, i| "<text x=\"#{pad}\" y=\"#{sh + pad + 1.5 + (result[:placed].length + i) * 1.5}\">Unplaced: #{esc.call(id)}</text>" }.join
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 #{canvas_width} #{canvas_height}\" role=\"img\" aria-labelledby=\"title desc\"><title id=\"title\">Porch Parcel #{esc.call(result[:strategy])} shelf</title><desc id=\"desc\">#{occupied} occupied area, #{usable} usable area, margin #{result[:margin]}, #{result[:placed].length} placed parcels, #{result[:unplaced].length} unplaced</desc><style>.shelf{fill:url(#grid);stroke:#744831;stroke-width:.08}.blocked{fill:#6e5c4d;stroke:#3f3027;stroke-width:.03}.parcel{fill:#e97b54;stroke:#4f3225;stroke-width:.04}text{font:0.32px monospace;fill:#3e3026}</style><defs><pattern id=\"grid\" width=\"1\" height=\"1\" patternUnits=\"userSpaceOnUse\"><rect width=\"1\" height=\"1\" fill=\"#e9d3b1\"/><path d=\"M 1 0 L 0 0 0 1\" fill=\"none\" stroke=\"#d7b993\" stroke-width=\".02\"/></pattern></defs><rect class=\"shelf\" x=\"#{pad}\" y=\"#{pad}\" width=\"#{sw}\" height=\"#{sh}\"/>#{blocked}#{parcels}<text x=\"#{pad}\" y=\"#{sh + pad + 0.8}\">Strategy: #{esc.call(result[:strategy])} · Margin: #{result[:margin]} · Occupied: #{occupied} · Usable: #{usable}</text>#{legend}#{unplaced}</svg>"
   end
@@ -179,14 +181,14 @@ module PorchParcel
     usable = total - result[:blocked].length
     strategy_tag = "<p class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])} · Margin: #{result[:margin]} · Usable area: #{usable}</p>"
     parcels = result[:placed].map.with_index do |p, index|
-      label = "#{esc.call(p.parcel.id)} · #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}"
+      label = "#{esc.call(p.parcel.id)} · #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}#{p.parcel.rotatable ? '' : ' · rotation locked'}"
       "<div class=\"parcel\" aria-label=\"#{label}\" style=\"left:#{p.x * 100.0 / result[:shelf_width]}%;top:#{p.y * 100.0 / result[:shelf_height]}%;width:#{p.width * 100.0 / result[:shelf_width]}%;height:#{p.height * 100.0 / result[:shelf_height]}%\"><span>#{index + 1}</span></div>"
     end.join
     blocked_cells = result[:blocked].map do |x, y|
       "<div class=\"blocked\" role=\"img\" aria-label=\"Blocked shelf cell at #{x},#{y}\" style=\"position:absolute;left:#{x * 100.0 / result[:shelf_width]}%;top:#{y * 100.0 / result[:shelf_height]}%;width:#{100.0 / result[:shelf_width]}%;height:#{100.0 / result[:shelf_height]}%;background:repeating-linear-gradient(45deg,#6e5c4d 0 3px,#aa927c 3px 6px);border:1px solid #3f3027;box-sizing:border-box\"></div>"
     end.join
     parcels = blocked_cells + parcels
-    legend = result[:placed].map.with_index { |p, index| "<li><b>#{index + 1}. #{esc.call(p.parcel.id)}</b> #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''} at #{p.x},#{p.y}</li>" }.join
+    legend = result[:placed].map.with_index { |p, index| "<li><b>#{index + 1}. #{esc.call(p.parcel.id)}</b> #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}#{p.parcel.rotatable ? '' : ' · rotation locked'} at #{p.x},#{p.y}</li>" }.join
     unplaced = result[:unplaced].empty? ? '<li>none</li>' : result[:unplaced].map { |id| "<li>#{esc.call(id)}</li>" }.join
     "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Porch Parcel shelf</title><style>#{html_css(result[:shelf_width], result[:shelf_height])}</style></head><body><main><p class=\"eyebrow\">OFFLINE DELIVERY DESK · 2020</p><h1>Porch Parcel</h1><p class=\"lede\">A calm little shelf plan for a chaotic little porch.</p><section class=\"stats\"><div><b>#{occupied}</b><span>occupied area</span></div><div><b>#{total}</b><span>total area</span></div><div><b>#{usable}</b><span>usable area</span></div><div><b>#{result[:placed].length}</b><span>placed</span></div></section><section class=\"shelf\" aria-label=\"#{result[:shelf_width]} by #{result[:shelf_height]} shelf\">#{parcels}</section><section class=\"legend\"><h2>Parcel legend</h2>#{strategy_tag}<ul>#{legend}</ul></section><section class=\"unplaced\"><h2>Still on the porch</h2><ul>#{unplaced}</ul></section><footer>Created retrospectively in September 2026 · fictional 2020-inspired project</footer></main></body></html>"
   end
