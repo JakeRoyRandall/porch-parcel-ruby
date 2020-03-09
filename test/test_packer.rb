@@ -201,6 +201,16 @@ class PorchParcelTest < Minitest::Test
       assert_includes `ruby #{script} --csv --json #{input} 2>&1`, 'cannot be combined'; assert_includes `ruby #{script} --csv --compare #{input} 2>&1`, 'cannot be combined'; assert_includes `ruby #{script} --csv --validate-only #{input} 2>&1`, 'cannot be combined'
     end
   end
+  def test_csv_unplaced_only_keeps_header_and_filters_rows
+    data = {'shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [{'id' => 'placed', 'width' => 1, 'height' => 1}, {'id' => 'waiting', 'width' => 2, 'height' => 1}]}
+    result = PorchParcel.pack(data); output = StringIO.new; PorchParcel.render_csv(result, data, output, unplaced_only: true); rows = CSV.parse(output.string)
+    assert_equal 2, rows.length; assert_equal 'waiting', rows[1][0]; assert_equal 'unplaced', rows[1][6]
+    empty = StringIO.new; PorchParcel.render_csv(PorchParcel.pack({'shelf_width' => 1, 'shelf_height' => 1, 'parcels' => []}), {'parcels' => []}, empty, unplaced_only: true); assert_equal 1, CSV.parse(empty.string).length
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); File.write(input, JSON.generate(data)); script = File.expand_path('../app/packer.rb', __dir__)
+      assert_includes `ruby #{script} --unplaced-only #{input} 2>&1`, 'requires --csv'
+    end
+  end
   def test_margin_requires_clear_shelf_boundary_and_separates_parcels
     tight = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 1, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]}, margin: 1)
     assert_equal ['A'], tight[:unplaced]

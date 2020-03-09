@@ -22,7 +22,7 @@ ruby -Itest test/test_packer.rb
 
 `--json` replaces the terminal report with one deterministic JSON object containing shelf dimensions, strategy, blocked coordinates, placed parcel geometry and rotation flags, unplaced IDs, occupied area, and usable area. Diagnostics remain on stderr, so stdout can be piped to another tool.
 
-`--csv` replaces the terminal report with CRLF CSV rows using `id,x,y,width,height,rotated,status` columns. It lists placed parcels first and unplaced parcels with blank coordinates/rotation; blocked cells are not rows. CSV is single-run output and cannot be combined with JSON, compare, or validate-only.
+`--csv` replaces the terminal report with CRLF CSV rows using `id,x,y,width,height,rotated,status` columns. It lists placed parcels first and unplaced parcels with blank coordinates/rotation; blocked cells are not rows. CSV is single-run output and cannot be combined with JSON, compare, or validate-only. Add `--unplaced-only` with `--csv` to retain the header while emitting only unplaced rows; the filter is rejected for other output modes.
 
 `--compare` packs the same input with `first-fit`, `area`, and `best-fit`, then reports occupied area, placed count, unused usable area, and unplaced IDs side by side. Add `--json` for structured comparison or `--html report.html` for three readable shelf panels. It shares rotation and margin options and cannot be combined with `--strategy`.
 
