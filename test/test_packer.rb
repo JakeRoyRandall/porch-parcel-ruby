@@ -15,6 +15,22 @@ class PorchParcelTest < Minitest::Test
     result = PorchParcel.pack('shelf_width' => 4, 'shelf_height' => 2, 'parcels' => [{'id' => 'edge', 'width' => 4, 'height' => 2}])
     assert_empty result[:unplaced]; assert_equal [0, 0], [result[:placed][0].x, result[:placed][0].y]
   end
+  def test_rotation_places_parcel_that_only_fits_turning
+    data = {'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}
+    assert_equal ['turn'], PorchParcel.pack(data)[:unplaced]
+    result = PorchParcel.pack(data, rotate: true)
+    refute_empty result[:placed]; assert result[:placed][0].rotated; assert_equal [3, 2], [result[:placed][0].width, result[:placed][0].height]
+  end
+  def test_original_orientation_wins_tie
+    result = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 3, 'parcels' => [{'id' => 'tie', 'width' => 2, 'height' => 2}]}, rotate: true)
+    refute result[:placed][0].rotated
+  end
+  def test_rotation_has_no_overlaps
+    result = PorchParcel.pack({'shelf_width' => 4, 'shelf_height' => 4, 'parcels' => [
+      {'id' => 'A', 'width' => 3, 'height' => 2}, {'id' => 'B', 'width' => 2, 'height' => 3}
+    ]}, rotate: true)
+    occupied = result[:grid].flatten.compact; assert_equal occupied.uniq.sort, %w[A B].sort
+  end
   def test_unplaced_when_no_rectangle_remains
     result = PorchParcel.pack('shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'A', 'width' => 2, 'height' => 2}, {'id' => 'B', 'width' => 2, 'height' => 1}])
     assert_equal ['B'], result[:unplaced]
@@ -34,6 +50,7 @@ class PorchParcelTest < Minitest::Test
       too_big = File.join(dir, 'big.json'); File.write(too_big, 'x' * (1024 * 1024 + 1))
       oversized = `ruby #{script} #{too_big} 2>&1`; assert_includes oversized, 'Input error'; refute_includes oversized, 'Traceback'
       extra = `ruby #{script} one.json two.json 2>&1`; assert_includes extra, 'exactly one input path'; refute_includes extra, 'Traceback'
+      unknown = `ruby #{script} --wat one.json 2>&1`; assert_includes unknown, 'unknown flag'; refute_includes unknown, 'Traceback'
     end
   end
 end

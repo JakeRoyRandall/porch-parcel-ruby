@@ -3,7 +3,7 @@ require 'json'
 
 module PorchParcel
   Parcel = Struct.new(:id, :width, :height)
-  Placement = Struct.new(:parcel, :x, :y)
+  Placement = Struct.new(:parcel, :x, :y, :width, :height, :rotated)
   module_function
 
   def validate!(data)
@@ -20,31 +20,35 @@ module PorchParcel
       raise ArgumentError, 'parcel ids must be printable names up to 32 characters' unless id.is_a?(String) && id.match?(/\A[A-Za-z0-9][A-Za-z0-9._-]{0,31}\z/)
       raise ArgumentError, 'parcel ids must be unique' if ids.include?(id)
       raise ArgumentError, 'parcel dimensions must be positive integers' unless integer.call(width) && integer.call(height) && width > 0 && height > 0
-      raise ArgumentError, 'parcel exceeds shelf bounds' if width > sw || height > sh
+      raise ArgumentError, 'parcel dimensions must be at most 40x40' if width > 40 || height > 40
       ids << id
     end
     true
   end
 
-  def pack(data)
+  def pack(data, rotate: false)
     validate!(data)
     shelf = Array.new(data['shelf_height']) { Array.new(data['shelf_width']) }
     placed = []; unplaced = []
     data['parcels'].each do |raw|
       parcel = Parcel.new(raw['id'], raw['width'], raw['height']); found = nil
-      (0..(data['shelf_height'] - parcel.height)).each do |y|
+      (0...data['shelf_height']).each do |y|
         break if found
-        (0..(data['shelf_width'] - parcel.width)).each do |x|
-          cells = (y...(y + parcel.height)).flat_map { |row| (x...(x + parcel.width)).map { |col| shelf[row][col] } }
-          if cells.all?(&:nil?)
-            found = [x, y]; break
+        (0...data['shelf_width']).each do |x|
+          [[parcel.width, parcel.height, false], [parcel.height, parcel.width, true]].take(rotate ? 2 : 1).each do |width, height, rotated|
+            next if x + width > data['shelf_width'] || y + height > data['shelf_height']
+            cells = (y...(y + height)).flat_map { |row| (x...(x + width)).map { |col| shelf[row][col] } }
+            if cells.all?(&:nil?)
+              found = [x, y, width, height, rotated]; break
+            end
           end
+          break if found
         end
       end
       if found
-        x, y = found
-        (y...(y + parcel.height)).each { |row| (x...(x + parcel.width)).each { |col| shelf[row][col] = parcel.id } }
-        placed << Placement.new(parcel, x, y)
+        x, y, width, height, rotated = found
+        (y...(y + height)).each { |row| (x...(x + width)).each { |col| shelf[row][col] = parcel.id } }
+        placed << Placement.new(parcel, x, y, width, height, rotated)
       else
         unplaced << parcel.id
       end
@@ -52,21 +56,24 @@ module PorchParcel
     { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, placed: placed, unplaced: unplaced }
   end
 
-  def render(result, output = $stdout)
+  def render(result, output = $stdout, show_orientation: false)
     output.puts "PORCH PARCEL // #{result[:shelf_width]}x#{result[:shelf_height]} shelf"
     result[:grid].each { |row| output.puts row.map { |cell| cell ? '#' : '.' }.join }
-    output.puts "Placed: #{result[:placed].map { |p| "#{p.parcel.id}@#{p.x},#{p.y}" }.join(' ')}"
+    placements = result[:placed].map { |p| show_orientation ? "#{p.parcel.id}@#{p.x},#{p.y}(#{p.width}x#{p.height}#{p.rotated ? ',rotated' : ''})" : "#{p.parcel.id}@#{p.x},#{p.y}" }
+    output.puts "Placed: #{placements.join(' ')}"
     output.puts "Unplaced: #{result[:unplaced].empty? ? 'none' : result[:unplaced].join(', ')}"
   end
 end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    raise ArgumentError, 'exactly one input path is required' unless ARGV.length == 1
-    path = ARGV[0]
+    flags = ARGV.select { |arg| arg.start_with?('--') }
+    raise ArgumentError, 'unknown flag' unless (flags - %w[--rotate --show-orientation]).empty?
+    raise ArgumentError, 'exactly one input path is required' unless ARGV.length - flags.length == 1
+    path = (ARGV - flags).first
     raise ArgumentError, 'input file exceeds 1 MiB' if File.size(path) > 1024 * 1024
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
-    PorchParcel.render(PorchParcel.pack(data))
+    PorchParcel.render(PorchParcel.pack(data, rotate: flags.include?('--rotate')), $stdout, show_orientation: flags.include?('--show-orientation'))
   rescue JSON::ParserError, Errno::ENOENT, SystemCallError => error
     warn "Input error: #{error.message}"; exit 2
   rescue ArgumentError => error
