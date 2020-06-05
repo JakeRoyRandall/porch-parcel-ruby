@@ -53,4 +53,21 @@ class PorchParcelTest < Minitest::Test
       unknown = `ruby #{script} --wat one.json 2>&1`; assert_includes unknown, 'unknown flag'; refute_includes unknown, 'Traceback'
     end
   end
+  def test_html_report_contains_geometry_labels_and_area
+    result = PorchParcel.pack('shelf_width' => 4, 'shelf_height' => 2, 'parcels' => [{'id' => 'box1', 'width' => 2, 'height' => 1}, {'id' => 'box2', 'width' => 1, 'height' => 2}])
+    page = PorchParcel.html(result)
+    assert_includes page, '<!doctype html>'; assert_includes page, 'box1'; assert_includes page, '2×1'; assert_includes page, 'occupied area'; assert_includes page, 'width:50.0%'; assert_includes page, 'height:100.0%'
+    square = PorchParcel.html(PorchParcel.pack('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => []))
+    assert_includes square, 'aspect-ratio:1/1'; assert_includes square, 'background-size:calc(100% / 1) calc(100% / 1)'
+  end
+  def test_cli_html_export_and_existing_file_guard
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); output = File.join(dir, 'report.html')
+      File.write(input, JSON.generate('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [{'id' => 'x', 'width' => 1, 'height' => 1}]))
+      script = File.expand_path('../app/packer.rb', __dir__)
+      first = `ruby #{script} --html #{output} #{input}`; assert File.file?(output); assert_includes File.read(output), 'x'
+      second = `ruby #{script} --html #{output} #{input} 2>&1`; assert_includes second, 'output exists'
+      forced = `ruby #{script} --html #{output} --force #{input}`; assert File.file?(output); refute_includes forced, 'Traceback'
+    end
+  end
 end
