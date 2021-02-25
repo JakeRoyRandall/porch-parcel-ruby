@@ -242,13 +242,18 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); csv = !!args.delete('--csv'); unplaced_only = !!args.delete('--unplaced-only'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; margin = 0; html_path = nil; svg_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); csv = !!args.delete('--csv'); unplaced_only = !!args.delete('--unplaced-only'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; min_fill = nil; margin = 0; html_path = nil; svg_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
       strategy_explicit = true
     end
     if (sort_index = args.index('--sort') )
       args.delete_at(sort_index); sort = args.delete_at(sort_index); raise ArgumentError, '--sort needs a value' unless sort
+    end
+    if (fill_index = args.index('--min-fill') )
+      args.delete_at(fill_index); fill_text = args.delete_at(fill_index); raise ArgumentError, '--min-fill needs a value' unless fill_text
+      begin min_fill = Float(fill_text); rescue ArgumentError; raise ArgumentError, '--min-fill must be finite and between 0 and 100'; end
+      raise ArgumentError, '--min-fill must be finite and between 0 and 100' unless min_fill.finite? && min_fill.between?(0, 100)
     end
     if (margin_index = args.index('--margin') )
       args.delete_at(margin_index); margin_text = args.delete_at(margin_index); raise ArgumentError, '--margin needs a value' unless margin_text
@@ -267,6 +272,7 @@ if $PROGRAM_NAME == __FILE__
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
     raise ArgumentError, '--csv cannot be combined with --json, --compare, or --validate-only' if csv && (json || compare_mode || validate_mode)
     raise ArgumentError, '--unplaced-only requires --csv' if unplaced_only && !csv
+    raise ArgumentError, '--min-fill cannot be combined with --compare or --validate-only' if min_fill && (compare_mode || validate_mode)
     raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
     raise ArgumentError, '--svg cannot be combined with --html or --compare' if svg_path && (html_path || compare_mode)
     raise ArgumentError, '--validate-only cannot be combined with --strategy, --sort, --compare, --html, --svg, --show-orientation, or --force' if validate_mode && (strategy_explicit || sort || compare_mode || html_path || svg_path || show || force)
@@ -289,6 +295,12 @@ if $PROGRAM_NAME == __FILE__
       if svg_path
         raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(svg_path) && !force
         PorchParcel.write_html(svg_path, PorchParcel.svg(result), force: force)
+      end
+      if min_fill
+        usable = result[:shelf_width] * result[:shelf_height] - result[:blocked].length
+        occupied = result[:placed].sum { |placement| placement.width * placement.height }
+        fill_percent = usable.zero? ? 0.0 : occupied * 100.0 / usable
+        exit 1 if fill_percent < min_fill
       end
     end
   rescue JSON::ParserError, Errno::ENOENT, SystemCallError => error

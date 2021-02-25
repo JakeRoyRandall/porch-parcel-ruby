@@ -211,6 +211,16 @@ class PorchParcelTest < Minitest::Test
       assert_includes `ruby #{script} --unplaced-only #{input} 2>&1`, 'requires --csv'
     end
   end
+  def test_cli_min_fill_threshold_status_and_blocked_denominator
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); File.write(input, JSON.generate('shelf_width' => 2, 'shelf_height' => 2, 'blocked' => [{'x' => 1, 'y' => 1}], 'parcels' => [{'id' => 'box', 'width' => 1, 'height' => 1}]))
+      script = File.expand_path('../app/packer.rb', __dir__)
+      ok = system("ruby #{script} --min-fill 33 #{input} > #{File.join(dir, 'ok.txt')}"); assert ok
+      low = system("ruby #{script} --min-fill 34 #{input} > #{File.join(dir, 'low.txt')}"); refute low; assert_includes File.read(File.join(dir, 'low.txt')), 'Placed: box@0,0'
+      assert_includes `ruby #{script} --min-fill 1 --compare #{input} 2>&1`, 'cannot be combined'
+      assert_includes `ruby #{script} --min-fill nan #{input} 2>&1`, 'finite and between'
+    end
+  end
   def test_margin_requires_clear_shelf_boundary_and_separates_parcels
     tight = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 1, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]}, margin: 1)
     assert_equal ['A'], tight[:unplaced]
