@@ -229,6 +229,13 @@ class PorchParcelTest < Minitest::Test
       assert_includes `ruby #{script} --max-unplaced 31 #{input} 2>&1`, '0 to 30'; assert_includes `ruby #{script} --max-unplaced 1 --compare #{input} 2>&1`, 'cannot be combined'
     end
   end
+  def test_summary_only_reports_counts_without_grid
+    data = {'shelf_width' => 2, 'shelf_height' => 2, 'blocked' => [{'x' => 1, 'y' => 1}], 'parcels' => [{'id' => 'box', 'width' => 1, 'height' => 1}, {'id' => 'wait', 'width' => 3, 'height' => 1}]}
+    result = PorchParcel.pack(data); output = StringIO.new; PorchParcel.render_summary(result, output); assert_includes output.string, 'Placed: 1'; assert_includes output.string, 'Unplaced: 1'; assert_includes output.string, 'Fill: 33.3% (occupied 1 / usable 3)'; refute_includes output.string, '#'
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); File.write(input, JSON.generate(data)); script = File.expand_path('../app/packer.rb', __dir__); cli = `ruby #{script} --summary-only #{input}`; assert_includes cli, 'PORCH PARCEL SUMMARY'; refute_includes cli, ".."; assert_includes `ruby #{script} --summary-only --json #{input} 2>&1`, 'cannot be combined'
+    end
+  end
   def test_margin_requires_clear_shelf_boundary_and_separates_parcels
     tight = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 1, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]}, margin: 1)
     assert_equal ['A'], tight[:unplaced]

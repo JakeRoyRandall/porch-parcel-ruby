@@ -152,6 +152,16 @@ module PorchParcel
     end
   end
 
+  def render_summary(result, output = $stdout)
+    usable = result[:shelf_width] * result[:shelf_height] - result[:blocked].length
+    occupied = result[:placed].sum { |placement| placement.width * placement.height }
+    fill = usable.zero? ? 0.0 : occupied * 100.0 / usable
+    output.puts "PORCH PARCEL SUMMARY // #{result[:shelf_width]}x#{result[:shelf_height]} shelf"
+    output.puts "Placed: #{result[:placed].length}"
+    output.puts "Unplaced: #{result[:unplaced].length}"
+    output.puts format('Fill: %.1f%% (occupied %d / usable %d)', fill, occupied, usable)
+  end
+
   def compare(data, rotate: false, margin: 0, sort: nil)
     %w[first-fit area best-fit].to_h { |strategy| [strategy, pack(data, rotate: rotate, strategy: strategy, margin: margin, sort: sort)] }
   end
@@ -242,7 +252,7 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); csv = !!args.delete('--csv'); unplaced_only = !!args.delete('--unplaced-only'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; min_fill = nil; max_unplaced = nil; margin = 0; html_path = nil; svg_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); csv = !!args.delete('--csv'); summary_only = !!args.delete('--summary-only'); unplaced_only = !!args.delete('--unplaced-only'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; min_fill = nil; max_unplaced = nil; margin = 0; html_path = nil; svg_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
       strategy_explicit = true
@@ -276,6 +286,7 @@ if $PROGRAM_NAME == __FILE__
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
     raise ArgumentError, '--csv cannot be combined with --json, --compare, or --validate-only' if csv && (json || compare_mode || validate_mode)
     raise ArgumentError, '--unplaced-only requires --csv' if unplaced_only && !csv
+    raise ArgumentError, '--summary-only cannot be combined with --json, --csv, --compare, --validate-only, --html, or --svg' if summary_only && (json || csv || compare_mode || validate_mode || html_path || svg_path)
     raise ArgumentError, '--min-fill cannot be combined with --compare or --validate-only' if min_fill && (compare_mode || validate_mode)
     raise ArgumentError, '--max-unplaced cannot be combined with --compare or --validate-only' if max_unplaced && (compare_mode || validate_mode)
     raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
@@ -292,7 +303,7 @@ if $PROGRAM_NAME == __FILE__
       PorchParcel.write_html(html_path, PorchParcel.html_compare(results), force: force) if html_path
     else
       result = PorchParcel.pack(data, rotate: rotate, strategy: strategy, margin: margin, sort: sort)
-      if json then PorchParcel.render_json(result, $stdout) elsif csv then PorchParcel.render_csv(result, data, $stdout, unplaced_only: unplaced_only) else PorchParcel.render(result, $stdout, show_orientation: show) end
+      if json then PorchParcel.render_json(result, $stdout) elsif csv then PorchParcel.render_csv(result, data, $stdout, unplaced_only: unplaced_only) elsif summary_only then PorchParcel.render_summary(result, $stdout) else PorchParcel.render(result, $stdout, show_orientation: show) end
       if html_path
         raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force
         PorchParcel.write_html(html_path, PorchParcel.html(result), force: force)
