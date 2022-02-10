@@ -136,6 +136,15 @@ module PorchParcel
     %w[first-fit area best-fit].to_h { |strategy| [strategy, pack(data, rotate: rotate, strategy: strategy, margin: margin)] }
   end
 
+  def validate_only(data, rotate: false, margin: 0)
+    validate!(data)
+    pack(data.merge('parcels' => []), rotate: rotate, margin: margin)
+    data['parcels'].map do |parcel|
+      fit = pack(data.merge('parcels' => [parcel]), rotate: rotate, margin: margin)[:unplaced].empty?
+      {'id' => parcel['id'], 'fits_alone' => fit}
+    end
+  end
+
   def render_compare(results, output = $stdout)
     output.puts "PORCH PARCEL // strategy comparison"
     output.puts "strategy\toccupied\tplaced\tunused-usable\tunplaced"
@@ -208,7 +217,7 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; margin = 0; html_path = nil; svg_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; margin = 0; html_path = nil; svg_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
       strategy_explicit = true
@@ -230,6 +239,12 @@ if $PROGRAM_NAME == __FILE__
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
     raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
     raise ArgumentError, '--svg cannot be combined with --html or --compare' if svg_path && (html_path || compare_mode)
+    raise ArgumentError, '--validate-only cannot be combined with --strategy, --compare, --html, --svg, --show-orientation, or --force' if validate_mode && (strategy_explicit || compare_mode || html_path || svg_path || show || force)
+    if validate_mode
+      results = PorchParcel.validate_only(data, rotate: rotate, margin: margin)
+      if json then puts JSON.generate('valid' => true, 'parcels' => results) else results.each { |parcel| puts "#{parcel['id']}\tfits-alone\t#{parcel['fits_alone'] ? 'yes' : 'no'}" } end
+      exit 0
+    end
     if compare_mode
       results = PorchParcel.compare(data, rotate: rotate, margin: margin)
       if json then PorchParcel.render_compare_json(results, $stdout) else PorchParcel.render_compare(results, $stdout) end

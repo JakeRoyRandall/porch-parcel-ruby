@@ -16,6 +16,8 @@ Test:
 ruby -Itest test/test_packer.rb
 ```
 
+`--validate-only` checks each parcel independently against the shelf, blocked cells, margin, and rotation-lock rules without producing a packing layout. It prints `fits-alone` rows, or JSON with `--json`; it cannot be combined with strategy, compare, HTML, SVG, `--show-orientation`, or `--force` options.
+
 `--html` writes a standalone warm porch-style shelf report with proportional parcel rectangles, labels, dimensions, orientation, unplaced IDs, occupied/total/usable area, and a visibly striped, accessible marker for each blocked cell. It has no external assets and will not replace an existing report unless `--force` is supplied. Terminal output is still printed as usual.
 
 `--json` replaces the terminal report with one deterministic JSON object containing shelf dimensions, strategy, blocked coordinates, placed parcel geometry and rotation flags, unplaced IDs, occupied area, and usable area. Diagnostics remain on stderr, so stdout can be piped to another tool.

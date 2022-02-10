@@ -74,6 +74,27 @@ class PorchParcelTest < Minitest::Test
     assert_includes PorchParcel.html(result), 'rotation locked'
     assert_includes PorchParcel.svg(result), 'rotation locked'
   end
+  def test_validate_only_reuses_rotation_margin_and_blocked_fit_rules
+    data = {'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [
+      {'id' => 'turn', 'width' => 2, 'height' => 3}, {'id' => 'locked', 'width' => 2, 'height' => 3, 'rotatable' => false}
+    ]}
+    assert_equal [{'id' => 'turn', 'fits_alone' => true}, {'id' => 'locked', 'fits_alone' => false}], PorchParcel.validate_only(data, rotate: true)
+    margin = PorchParcel.validate_only({'shelf_width' => 2, 'shelf_height' => 2, 'parcels' => [{'id' => 'x', 'width' => 1, 'height' => 1}]}, margin: 1)
+    assert_equal false, margin[0]['fits_alone']
+  end
+  def test_cli_validate_only_json_and_conflicts
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); File.write(input, JSON.generate('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [{'id' => 'x', 'width' => 2, 'height' => 1}]))
+      script = File.expand_path('../app/packer.rb', __dir__)
+      parsed = JSON.parse(`ruby #{script} --validate-only --json #{input}`)
+      assert_equal false, parsed['parcels'][0]['fits_alone']
+      conflict = `ruby #{script} --validate-only --html #{File.join(dir, 'x.html')} #{input} 2>&1`; assert_includes conflict, 'cannot be combined'
+      assert_includes `ruby #{script} --validate-only --show-orientation #{input} 2>&1`, 'cannot be combined'
+      assert_includes `ruby #{script} --validate-only --force #{input} 2>&1`, 'cannot be combined'
+      empty = File.join(dir, 'empty.json'); File.write(empty, JSON.generate('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => []))
+      assert_includes `ruby #{script} --validate-only --margin 4 #{empty} 2>&1`, 'margin must be an integer'
+    end
+  end
   def test_original_orientation_wins_tie
     result = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 3, 'parcels' => [{'id' => 'tie', 'width' => 2, 'height' => 2}]}, rotate: true)
     refute result[:placed][0].rotated
