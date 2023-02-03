@@ -27,11 +27,13 @@ module PorchParcel
     true
   end
 
-  def pack(data, rotate: false)
+  def pack(data, rotate: false, strategy: 'first-fit')
     validate!(data)
+    raise ArgumentError, 'strategy must be first-fit or area' unless %w[first-fit area].include?(strategy)
     shelf = Array.new(data['shelf_height']) { Array.new(data['shelf_width']) }
     placed = []; unplaced = []
-    data['parcels'].each do |raw|
+    parcels = data['parcels'].each_with_index.sort_by { |raw, index| strategy == 'area' ? [-(raw['width'] * raw['height']), index] : [index, index] }.map(&:first)
+    parcels.each do |raw|
       parcel = Parcel.new(raw['id'], raw['width'], raw['height']); found = nil
       (0...data['shelf_height']).each do |y|
         break if found
@@ -54,11 +56,11 @@ module PorchParcel
         unplaced << parcel.id
       end
     end
-    { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, placed: placed, unplaced: unplaced }
+    { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, placed: placed, unplaced: unplaced, strategy: strategy }
   end
 
   def render(result, output = $stdout, show_orientation: false)
-    output.puts "PORCH PARCEL // #{result[:shelf_width]}x#{result[:shelf_height]} shelf"
+    output.puts "PORCH PARCEL // #{result[:shelf_width]}x#{result[:shelf_height]} shelf // #{result[:strategy]}"
     result[:grid].each { |row| output.puts row.map { |cell| cell ? '#' : '.' }.join }
     placements = result[:placed].map { |p| show_orientation ? "#{p.parcel.id}@#{p.x},#{p.y}(#{p.width}x#{p.height}#{p.rotated ? ',rotated' : ''})" : "#{p.parcel.id}@#{p.x},#{p.y}" }
     output.puts "Placed: #{placements.join(' ')}"
@@ -69,13 +71,14 @@ module PorchParcel
     esc = ->(text) { CGI.escapeHTML(text.to_s) }
     total = result[:shelf_width] * result[:shelf_height]
     occupied = result[:placed].sum { |p| p.width * p.height }
+    strategy_tag = "<span class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])}</span>"
     parcels = result[:placed].map.with_index do |p, index|
       label = "#{esc.call(p.parcel.id)} · #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}"
       "<div class=\"parcel\" aria-label=\"#{label}\" style=\"left:#{p.x * 100.0 / result[:shelf_width]}%;top:#{p.y * 100.0 / result[:shelf_height]}%;width:#{p.width * 100.0 / result[:shelf_width]}%;height:#{p.height * 100.0 / result[:shelf_height]}%\"><span>#{index + 1}</span></div>"
     end.join
     legend = result[:placed].map.with_index { |p, index| "<li><b>#{index + 1}. #{esc.call(p.parcel.id)}</b> #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''} at #{p.x},#{p.y}</li>" }.join
     unplaced = result[:unplaced].empty? ? '<li>none</li>' : result[:unplaced].map { |id| "<li>#{esc.call(id)}</li>" }.join
-    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Porch Parcel shelf</title><style>#{html_css(result[:shelf_width], result[:shelf_height])}</style></head><body><main><p class=\"eyebrow\">OFFLINE DELIVERY DESK · 2020</p><h1>Porch Parcel</h1><p class=\"lede\">A calm little shelf plan for a chaotic little porch.</p><section class=\"stats\"><div><b>#{occupied}</b><span>occupied area</span></div><div><b>#{total}</b><span>total area</span></div><div><b>#{result[:placed].length}</b><span>placed</span></div></section><section class=\"shelf\" aria-label=\"#{result[:shelf_width]} by #{result[:shelf_height]} shelf\">#{parcels}</section><section class=\"legend\"><h2>Parcel legend</h2><ul>#{legend}</ul></section><section class=\"unplaced\"><h2>Still on the porch</h2><ul>#{unplaced}</ul></section><footer>Created retrospectively in September 2026 · fictional 2020-inspired project</footer></main></body></html>"
+    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Porch Parcel shelf</title><style>#{html_css(result[:shelf_width], result[:shelf_height])}</style></head><body><main><p class=\"eyebrow\">OFFLINE DELIVERY DESK · 2020</p><h1>Porch Parcel</h1><p class=\"lede\">A calm little shelf plan for a chaotic little porch.</p><section class=\"stats\"><div><b>#{occupied}</b><span>occupied area</span></div><div><b>#{total}</b><span>total area</span></div><div><b>#{result[:placed].length}</b><span>placed</span></div></section><section class=\"shelf\" aria-label=\"#{result[:shelf_width]} by #{result[:shelf_height]} shelf\">#{parcels}</section><section class=\"legend\"><h2>Parcel legend</h2>#{strategy_tag}<ul>#{legend}</ul></section><section class=\"unplaced\"><h2>Still on the porch</h2><ul>#{unplaced}</ul></section><footer>Created retrospectively in September 2026 · fictional 2020-inspired project</footer></main></body></html>"
   end
 
   def html_css(width, height)
@@ -93,7 +96,10 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); force = !!args.delete('--force'); html_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); force = !!args.delete('--force'); strategy = 'first-fit'; html_path = nil
+    if (strategy_index = args.index('--strategy') )
+      args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
+    end
     if (index = args.index('--html') )
       args.delete_at(index); html_path = args.delete_at(index); raise ArgumentError, '--html needs a path' unless html_path
     end
@@ -102,7 +108,7 @@ if $PROGRAM_NAME == __FILE__
     path = args.first
     raise ArgumentError, 'input file exceeds 1 MiB' if File.size(path) > 1024 * 1024
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
-    result = PorchParcel.pack(data, rotate: rotate)
+    result = PorchParcel.pack(data, rotate: rotate, strategy: strategy)
     PorchParcel.render(result, $stdout, show_orientation: show)
     if html_path
       raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force

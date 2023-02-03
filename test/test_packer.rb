@@ -10,6 +10,25 @@ class PorchParcelTest < Minitest::Test
     ])
     assert_equal [['A', 'A', 'B', 'B', 'B'], ['A', 'A', nil, nil, nil], [nil, nil, nil, nil, nil]], result[:grid]
     assert_equal [['A', 0, 0], ['B', 2, 0]], result[:placed].map { |p| [p.parcel.id, p.x, p.y] }
+    assert_equal 'first-fit', result[:strategy]
+  end
+  def test_area_strategy_is_stable_and_identified
+    data = {'shelf_width' => 5, 'shelf_height' => 3, 'parcels' => [{'id' => 'small', 'width' => 1, 'height' => 1}, {'id' => 'large', 'width' => 3, 'height' => 2}, {'id' => 'medium', 'width' => 2, 'height' => 1}]}
+    first = PorchParcel.pack(data)
+    area = PorchParcel.pack(data, strategy: 'area')
+    assert_equal ['small', 'large', 'medium'], first[:placed].map { |p| p.parcel.id }
+    assert_equal ['large', 'medium', 'small'], area[:placed].map { |p| p.parcel.id }
+    assert_includes PorchParcel.html(area), 'Strategy: area'
+    assert_raises(ArgumentError) { PorchParcel.pack(data, strategy: 'sideways') }
+  end
+  def test_area_strategy_can_place_more_area_than_input_order
+    data = {'shelf_width' => 2, 'shelf_height' => 2, 'parcels' => [
+      {'id' => 'A', 'width' => 1, 'height' => 1}, {'id' => 'B', 'width' => 1, 'height' => 1},
+      {'id' => 'C', 'width' => 1, 'height' => 1}, {'id' => 'D', 'width' => 1, 'height' => 2}
+    ]}
+    first = PorchParcel.pack(data); area = PorchParcel.pack(data, strategy: 'area')
+    assert_equal 3, first[:placed].length; assert_equal 3, area[:placed].length
+    assert_operator area[:placed].sum { |p| p.width * p.height }, :>, first[:placed].sum { |p| p.width * p.height }
   end
   def test_exact_edge_fit
     result = PorchParcel.pack('shelf_width' => 4, 'shelf_height' => 2, 'parcels' => [{'id' => 'edge', 'width' => 4, 'height' => 2}])

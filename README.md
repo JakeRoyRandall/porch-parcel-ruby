@@ -7,7 +7,7 @@ The core accepts JSON with integer `shelf_width`, integer `shelf_height`, and up
 Run:
 
 ```sh
-ruby app/packer.rb [--rotate] [--show-orientation] [--html report.html] [--force] input.json
+ruby app/packer.rb [--strategy first-fit|area] [--rotate] [--show-orientation] [--html report.html] [--force] input.json
 ```
 
 Test:
@@ -17,3 +17,5 @@ ruby -Itest test/test_packer.rb
 ```
 
 `--html` writes a standalone warm porch-style shelf report with proportional parcel rectangles, labels, dimensions, orientation, unplaced IDs, and occupied/total area. It has no external assets and will not replace an existing report unless `--force` is supplied. Terminal output is still printed as usual.
+
+`first-fit` is the default and preserves input order. `area` stably sorts parcels by decreasing area before using the same deterministic placement scan. Reports identify the chosen strategy.
