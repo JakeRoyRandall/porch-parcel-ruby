@@ -71,17 +71,30 @@ class PorchParcelTest < Minitest::Test
     assert_includes output.string, 'Blocked: 1 cell(s); usable area: 3'
   end
   def test_unblocked_cli_render_keeps_original_summary_shape
-    result = PorchParcel.pack('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [])
-    output = StringIO.new
-    PorchParcel.render(result, output)
+    data = {'shelf_width' => 1, 'shelf_height' => 1, 'parcels' => []}
+    result = PorchParcel.pack(data)
+    output = StringIO.new; PorchParcel.render(result, output)
+    explicit = StringIO.new; PorchParcel.render(PorchParcel.pack(data, margin: 0), explicit)
+    assert_equal output.string, explicit.string
+    assert_equal 'PORCH PARCEL // 1x1 shelf // first-fit', output.string.lines.first.chomp
     refute_includes output.string, 'Blocked:'
+  end
+  def test_cli_explicit_zero_margin_matches_default_text
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json')
+      File.write(input, JSON.generate('shelf_width' => 2, 'shelf_height' => 2, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]))
+      script = File.expand_path('../app/packer.rb', __dir__)
+      default = `ruby #{script} #{input}`
+      explicit = `ruby #{script} --margin 0 #{input}`
+      assert_equal default, explicit
+    end
   end
   def test_json_render_is_deterministic_and_contains_placement_geometry
     result = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}, rotate: true)
     output = StringIO.new
     PorchParcel.render_json(result, output)
     payload = JSON.parse(output.string)
-    assert_equal %w[shelf_width shelf_height strategy blocked placed unplaced occupied_area usable_area], payload.keys
+    assert_equal %w[shelf_width shelf_height strategy margin blocked placed unplaced occupied_area usable_area], payload.keys
     assert_equal [], payload['blocked']
     assert_equal ['turn'], payload['placed'].map { |p| p['id'] }
     assert_equal true, payload['placed'][0]['rotated']
@@ -101,6 +114,30 @@ class PorchParcelTest < Minitest::Test
       assert_includes error, 'Input error'
       refute_includes error, '{"shelf_width"'
     end
+  end
+  def test_margin_requires_clear_shelf_boundary_and_separates_parcels
+    tight = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 1, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]}, margin: 1)
+    assert_equal ['A'], tight[:unplaced]
+    separated = PorchParcel.pack({'shelf_width' => 5, 'shelf_height' => 3, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}, {'id' => 'B', 'width' => 1, 'height' => 1}]}, margin: 1)
+    assert_equal [[1, 1], [3, 1]], separated[:placed].map { |p| [p.x, p.y] }
+    assert_equal 1, separated[:margin]
+  end
+  def test_margin_supports_rotated_parcel_and_blocked_obstacle
+    rotated = PorchParcel.pack({'shelf_width' => 4, 'shelf_height' => 5, 'parcels' => [{'id' => 'turn', 'width' => 3, 'height' => 2}]}, rotate: true, margin: 1)
+    assert_equal ['turn'], rotated[:placed].map { |p| p.parcel.id }
+    assert rotated[:placed][0].rotated
+    blocked = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 3, 'blocked' => [{'x' => 1, 'y' => 1}], 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]}, margin: 1)
+    assert_equal ['A'], blocked[:unplaced]
+  end
+  def test_margin_is_reported_in_all_output_formats_and_validated
+    result = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 3, 'parcels' => []}, margin: 2)
+    text = StringIO.new; PorchParcel.render(result, text)
+    assert_includes text.string, 'margin 2'
+    json = StringIO.new; PorchParcel.render_json(result, json)
+    assert_equal 2, JSON.parse(json.string)['margin']
+    assert_includes PorchParcel.html(result), 'Margin: 2'
+    assert_raises(ArgumentError) { PorchParcel.pack({'shelf_width' => 2, 'shelf_height' => 2, 'parcels' => []}, margin: 4) }
+    assert_raises(ArgumentError) { PorchParcel.pack({'shelf_width' => 2, 'shelf_height' => 2, 'parcels' => []}, margin: 1.0) }
   end
   def test_rotation_can_fit_around_blocked_cell
     data = {'shelf_width' => 3, 'shelf_height' => 3, 'blocked' => [{'x' => 0, 'y' => 0}, {'x' => 1, 'y' => 0}], 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}

@@ -35,9 +35,11 @@ module PorchParcel
     true
   end
 
-  def pack(data, rotate: false, strategy: 'first-fit')
+  def pack(data, rotate: false, strategy: 'first-fit', margin: 0)
     validate!(data)
     raise ArgumentError, 'strategy must be first-fit or area' unless %w[first-fit area].include?(strategy)
+    integer = ->(v) { v.is_a?(Integer) && !v.is_a?(TrueClass) && !v.is_a?(FalseClass) }
+    raise ArgumentError, 'margin must be an integer from 0 to 3' unless integer.call(margin) && margin.between?(0, 3)
     shelf = Array.new(data['shelf_height']) { Array.new(data['shelf_width']) }
     blocked_coords = data.fetch('blocked', []).map { |cell| [cell['x'], cell['y']] }
     blocked = blocked_coords.to_set
@@ -50,8 +52,15 @@ module PorchParcel
         (0...data['shelf_width']).each do |x|
           [[parcel.width, parcel.height, false], [parcel.height, parcel.width, true]].take(rotate ? 2 : 1).each do |width, height, rotated|
             next if x + width > data['shelf_width'] || y + height > data['shelf_height']
-            cells = (y...(y + height)).flat_map { |row| (x...(x + width)).map { |col| [shelf[row][col], blocked.include?([col, row])] } }
-            if cells.all? { |value, is_blocked| value.nil? && !is_blocked }
+            envelope_left = x - margin; envelope_top = y - margin
+            envelope_right = x + width + margin; envelope_bottom = y + height + margin
+            next if envelope_left < 0 || envelope_top < 0 || envelope_right > data['shelf_width'] || envelope_bottom > data['shelf_height']
+            clear = (envelope_top...envelope_bottom).all? do |row|
+              (envelope_left...envelope_right).all? do |col|
+                shelf[row][col].nil? && !blocked.include?([col, row])
+              end
+            end
+            if clear
               found = [x, y, width, height, rotated]; break
             end
           end
@@ -66,11 +75,13 @@ module PorchParcel
         unplaced << parcel.id
       end
     end
-    { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, blocked: blocked_coords, placed: placed, unplaced: unplaced, strategy: strategy }
+    { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, blocked: blocked_coords, placed: placed, unplaced: unplaced, strategy: strategy, margin: margin }
   end
 
   def render(result, output = $stdout, show_orientation: false)
-    output.puts "PORCH PARCEL // #{result[:shelf_width]}x#{result[:shelf_height]} shelf // #{result[:strategy]}"
+    header = "PORCH PARCEL // #{result[:shelf_width]}x#{result[:shelf_height]} shelf // #{result[:strategy]}"
+    header += " // margin #{result[:margin]}" if result[:margin] > 0
+    output.puts header
     result[:grid].each { |row| output.puts row.map { |cell| cell ? '#' : '.' }.join }
     placements = result[:placed].map { |p| show_orientation ? "#{p.parcel.id}@#{p.x},#{p.y}(#{p.width}x#{p.height}#{p.rotated ? ',rotated' : ''})" : "#{p.parcel.id}@#{p.x},#{p.y}" }
     output.puts "Placed: #{placements.join(' ')}"
@@ -87,6 +98,7 @@ module PorchParcel
       'shelf_width' => result[:shelf_width],
       'shelf_height' => result[:shelf_height],
       'strategy' => result[:strategy],
+      'margin' => result[:margin],
       'blocked' => result[:blocked].map { |x, y| {'x' => x, 'y' => y} },
       'placed' => result[:placed].map { |p| {'id' => p.parcel.id, 'x' => p.x, 'y' => p.y, 'width' => p.width, 'height' => p.height, 'rotated' => p.rotated} },
       'unplaced' => result[:unplaced],
@@ -101,7 +113,7 @@ module PorchParcel
     total = result[:shelf_width] * result[:shelf_height]
     occupied = result[:placed].sum { |p| p.width * p.height }
     usable = total - result[:blocked].length
-    strategy_tag = "<p class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])} · Usable area: #{usable}</p>"
+    strategy_tag = "<p class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])} · Margin: #{result[:margin]} · Usable area: #{usable}</p>"
     parcels = result[:placed].map.with_index do |p, index|
       label = "#{esc.call(p.parcel.id)} · #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}"
       "<div class=\"parcel\" aria-label=\"#{label}\" style=\"left:#{p.x * 100.0 / result[:shelf_width]}%;top:#{p.y * 100.0 / result[:shelf_height]}%;width:#{p.width * 100.0 / result[:shelf_width]}%;height:#{p.height * 100.0 / result[:shelf_height]}%\"><span>#{index + 1}</span></div>"
@@ -130,9 +142,13 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); force = !!args.delete('--force'); strategy = 'first-fit'; html_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); force = !!args.delete('--force'); strategy = 'first-fit'; margin = 0; html_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
+    end
+    if (margin_index = args.index('--margin') )
+      args.delete_at(margin_index); margin_text = args.delete_at(margin_index); raise ArgumentError, '--margin needs a value' unless margin_text
+      raise ArgumentError, 'margin must be an integer from 0 to 3' unless margin_text.match?(/\A\d+\z/); margin = Integer(margin_text, 10)
     end
     if (index = args.index('--html') )
       args.delete_at(index); html_path = args.delete_at(index); raise ArgumentError, '--html needs a path' unless html_path
@@ -142,7 +158,7 @@ if $PROGRAM_NAME == __FILE__
     path = args.first
     raise ArgumentError, 'input file exceeds 1 MiB' if File.size(path) > 1024 * 1024
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
-    result = PorchParcel.pack(data, rotate: rotate, strategy: strategy)
+    result = PorchParcel.pack(data, rotate: rotate, strategy: strategy, margin: margin)
     if json
       PorchParcel.render_json(result, $stdout)
     else
