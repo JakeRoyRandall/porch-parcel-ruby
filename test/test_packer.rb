@@ -22,6 +22,27 @@ class PorchParcelTest < Minitest::Test
     assert_includes PorchParcel.html(area), 'Strategy: area'
     assert_raises(ArgumentError) { PorchParcel.pack(data, strategy: 'sideways') }
   end
+  def test_best_fit_is_distinct_deterministic_heuristic
+    data = {'shelf_width' => 5, 'shelf_height' => 4, 'parcels' => [
+      {'id' => 'a', 'width' => 1, 'height' => 1}, {'id' => 'b', 'width' => 1, 'height' => 2},
+      {'id' => 'c', 'width' => 4, 'height' => 3}, {'id' => 'd', 'width' => 1, 'height' => 3}
+    ]}
+    first = PorchParcel.pack(data)
+    best = PorchParcel.pack(data, strategy: 'best-fit')
+    assert_equal ['a', 'b', 'd'], first[:placed].map { |p| p.parcel.id }
+    assert_equal ['a', 'b', 'c'], best[:placed].map { |p| p.parcel.id }
+    assert_operator best[:placed].sum { |p| p.width * p.height }, :>, first[:placed].sum { |p| p.width * p.height }
+    assert_equal best[:grid], PorchParcel.pack(data, strategy: 'best-fit')[:grid]
+  end
+  def test_best_fit_considers_later_positions_and_respects_clearance
+    data = {'shelf_width' => 4, 'shelf_height' => 2, 'blocked' => [{'x' => 0, 'y' => 0}], 'parcels' => [{'id' => 'a', 'width' => 1, 'height' => 1}, {'id' => 'b', 'width' => 1, 'height' => 1}]}
+    result = PorchParcel.pack(data, strategy: 'best-fit')
+    assert_equal [3, 1], [result[:placed][0].x, result[:placed][0].y]
+    assert_equal [3, 0], [result[:placed][1].x, result[:placed][1].y]
+    occupied = result[:grid].flatten.compact
+    assert_equal occupied.length, occupied.count { |id| %w[a b].include?(id) }
+    assert_equal [[0, 0]], result[:blocked]
+  end
   def test_area_strategy_can_place_more_area_than_input_order
     data = {'shelf_width' => 2, 'shelf_height' => 2, 'parcels' => [
       {'id' => 'A', 'width' => 1, 'height' => 1}, {'id' => 'B', 'width' => 1, 'height' => 1},

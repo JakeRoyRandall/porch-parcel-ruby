@@ -37,7 +37,7 @@ module PorchParcel
 
   def pack(data, rotate: false, strategy: 'first-fit', margin: 0)
     validate!(data)
-    raise ArgumentError, 'strategy must be first-fit or area' unless %w[first-fit area].include?(strategy)
+    raise ArgumentError, 'strategy must be first-fit, area, or best-fit' unless %w[first-fit area best-fit].include?(strategy)
     integer = ->(v) { v.is_a?(Integer) && !v.is_a?(TrueClass) && !v.is_a?(FalseClass) }
     raise ArgumentError, 'margin must be an integer from 0 to 3' unless integer.call(margin) && margin.between?(0, 3)
     shelf = Array.new(data['shelf_height']) { Array.new(data['shelf_width']) }
@@ -46,9 +46,9 @@ module PorchParcel
     placed = []; unplaced = []
     parcels = data['parcels'].each_with_index.sort_by { |raw, index| strategy == 'area' ? [-(raw['width'] * raw['height']), index] : [index, index] }.map(&:first)
     parcels.each do |raw|
-      parcel = Parcel.new(raw['id'], raw['width'], raw['height']); found = nil
+      parcel = Parcel.new(raw['id'], raw['width'], raw['height']); found = nil; best_score = nil
       (0...data['shelf_height']).each do |y|
-        break if found
+        break if found && strategy != 'best-fit'
         (0...data['shelf_width']).each do |x|
           [[parcel.width, parcel.height, false], [parcel.height, parcel.width, true]].take(rotate ? 2 : 1).each do |width, height, rotated|
             next if x + width > data['shelf_width'] || y + height > data['shelf_height']
@@ -61,10 +61,32 @@ module PorchParcel
               end
             end
             if clear
-              found = [x, y, width, height, rotated]; break
+              candidate = [x, y, width, height, rotated]
+              if strategy == 'best-fit'
+                right_gaps = (y...(y + height)).map do |row|
+                  col = x + width + margin; count = 0
+                  while col < data['shelf_width'] && shelf[row][col].nil? && !blocked.include?([col, row])
+                    count += 1; col += 1
+                  end
+                  count
+                end
+                bottom_gaps = (x...(x + width)).map do |col|
+                  row = y + height + margin; count = 0
+                  while row < data['shelf_height'] && shelf[row][col].nil? && !blocked.include?([col, row])
+                    count += 1; row += 1
+                  end
+                  count
+                end
+                score = [right_gaps.min, bottom_gaps.min, y, x, rotated ? 1 : 0]
+                if best_score.nil? || (score <=> best_score) == -1
+                  best_score = score; found = candidate
+                end
+              else
+                found = candidate; break
+              end
             end
           end
-          break if found
+          break if found && strategy != 'best-fit'
         end
       end
       if found
