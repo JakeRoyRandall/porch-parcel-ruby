@@ -236,4 +236,32 @@ class PorchParcelTest < Minitest::Test
     blocked = PorchParcel.compare({'shelf_width' => 2, 'shelf_height' => 2, 'blocked' => [{'x' => 0, 'y' => 0}, {'x' => 1, 'y' => 0}, {'x' => 0, 'y' => 1}, {'x' => 1, 'y' => 1}], 'parcels' => [{'id' => 'x', 'width' => 1, 'height' => 1}]})
     assert blocked.values.all? { |r| r[:placed].empty? && r[:unplaced] == ['x'] }
   end
+  def test_svg_export_contains_scalable_geometry_legend_and_rotation
+    result = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'turn', 'width' => 2, 'height' => 3}]}, rotate: true)
+    svg = PorchParcel.svg(result)
+    assert_includes svg, '<svg'
+    assert_includes svg, 'viewBox="0 0 24 10.5"'
+    blocked_svg = PorchParcel.svg(PorchParcel.pack({'shelf_width' => 1, 'shelf_height' => 1, 'blocked' => [{'x' => 0, 'y' => 0}], 'parcels' => []}))
+    assert_includes blocked_svg, 'Blocked shelf cell at 0,0'
+    assert_includes svg, 'turn 3×2 · rotated'
+    assert_includes svg, 'occupied area'
+    require 'rexml/document'; document = REXML::Document.new(svg)
+    assert_equal 'svg', document.root.name
+  end
+  def test_cli_svg_existing_file_guard_and_flag_conflicts
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); output = File.join(dir, 'shelf.svg')
+      File.write(input, JSON.generate('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [{'id' => 'x', 'width' => 1, 'height' => 1}]))
+      script = File.expand_path('../app/packer.rb', __dir__)
+      `ruby #{script} --svg #{output} #{input}`; assert File.file?(output)
+      second = `ruby #{script} --svg #{output} #{input} 2>&1`; assert_includes second, 'output exists'
+      conflict = `ruby #{script} --svg #{output} --html #{File.join(dir, 'other.html')} #{input} 2>&1`; assert_includes conflict, 'cannot be combined'
+    end
+  end
+  def test_svg_narrow_shelf_allocates_canvas_for_long_unplaced_legend
+    parcels = 30.times.map { |i| {'id' => "parcel-#{i}-long-label", 'width' => 40, 'height' => 20} }
+    svg = PorchParcel.svg(PorchParcel.pack({'shelf_width' => 1, 'shelf_height' => 1, 'parcels' => parcels}))
+    assert_includes svg, 'viewBox="0 0 24 53.0"'
+    assert_includes svg, 'Unplaced: parcel-29-long-label'
+  end
 end

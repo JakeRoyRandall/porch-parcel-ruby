@@ -7,7 +7,7 @@ The core accepts JSON with integer `shelf_width`, integer `shelf_height`, and up
 Run:
 
 ```sh
-ruby app/packer.rb [--strategy first-fit|area|best-fit] [--compare] [--rotate] [--margin 0..3] [--show-orientation] [--json] [--html report.html] [--force] input.json
+ruby app/packer.rb [--strategy first-fit|area|best-fit] [--compare] [--rotate] [--margin 0..3] [--show-orientation] [--json] [--html report.html] [--svg shelf.svg] [--force] input.json
 ```
 
 Test:
@@ -21,6 +21,8 @@ ruby -Itest test/test_packer.rb
 `--json` replaces the terminal report with one deterministic JSON object containing shelf dimensions, strategy, blocked coordinates, placed parcel geometry and rotation flags, unplaced IDs, occupied area, and usable area. Diagnostics remain on stderr, so stdout can be piped to another tool.
 
 `--compare` packs the same input with `first-fit`, `area`, and `best-fit`, then reports occupied area, placed count, unused usable area, and unplaced IDs side by side. Add `--json` for structured comparison or `--html report.html` for three readable shelf panels. It shares rotation and margin options and cannot be combined with `--strategy`.
+
+`--svg shelf.svg` writes a standalone scalable shelf diagram for one strategy, with a padded outer canvas, visible shelf grid, blocked cells, parcel markers, an escaped legend, orientation details, unplaced IDs, and occupied/usable summary. The canvas reserves enough width and height for narrow shelves and long legends. It cannot be combined with `--html` or `--compare`; existing files require `--force`.
 
 `first-fit` is the default and preserves input order. `area` stably sorts parcels by decreasing area before using the same deterministic placement scan. `best-fit` preserves input order but evaluates every valid candidate for each parcel, choosing the smallest contiguous free gap immediately to the right across its rows, then the analogous gap below, then top-left position; the requested margin is excluded from those measured gaps. It is a deterministic packing heuristic without an optimality guarantee. Reports identify the chosen strategy.
 

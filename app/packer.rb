@@ -162,6 +162,16 @@ module PorchParcel
     "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Porch Parcel strategy comparison</title><style>#{html_css(results.values.first[:shelf_width], results.values.first[:shelf_height])}.compare-panels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.compare-panel{background:#fffaf0;border:1px solid #dbc5a8;padding:16px}.compare-panel h2{margin-top:0;color:#ad5438}.compare-panel .shelf{box-shadow:none}.unplaced-line{font:12px monospace}@media(max-width:800px){.compare-panels{grid-template-columns:1fr}}</style></head><body><main><p class=\"eyebrow\">OFFLINE DELIVERY DESK · 2020</p><h1>Porch Parcel</h1><p class=\"lede\">Three ways to stack the same chaotic little porch.</p><section class=\"compare-panels\">#{panels}</section><footer>Created retrospectively in September 2026 · fictional 2020-inspired project</footer></main></body></html>"
   end
 
+  def svg(result)
+    esc = ->(text) { CGI.escapeHTML(text.to_s) }
+    sw, sh = result[:shelf_width], result[:shelf_height]; pad = 2.0; occupied = result[:placed].sum { |p| p.width * p.height }; usable = sw * sh - result[:blocked].length; legend_lines = 2 + result[:placed].length + result[:unplaced].length; canvas_width = [sw + pad * 2, 24].max; canvas_height = sh + pad * 2 + legend_lines * 1.5
+    blocked = result[:blocked].map { |x, y| "<rect class=\"blocked\" x=\"#{x + pad}\" y=\"#{y + pad}\" width=\"1\" height=\"1\" aria-label=\"Blocked shelf cell at #{x},#{y}\"/>" }.join
+    parcels = result[:placed].map.with_index { |p, i| "<rect class=\"parcel\" x=\"#{p.x + pad}\" y=\"#{p.y + pad}\" width=\"#{p.width}\" height=\"#{p.height}\"/><text x=\"#{p.x + pad + p.width / 2.0}\" y=\"#{p.y + pad + p.height / 2.0}\" text-anchor=\"middle\" dominant-baseline=\"middle\">#{i + 1}</text>" }.join
+    legend = result[:placed].map.with_index { |p, i| "<text x=\"#{pad}\" y=\"#{sh + pad + 1.5 + i * 1.5}\">#{i + 1}. #{esc.call(p.parcel.id)} #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''} at #{p.x},#{p.y}</text>" }.join
+    unplaced = result[:unplaced].map.with_index { |id, i| "<text x=\"#{pad}\" y=\"#{sh + pad + 1.5 + (result[:placed].length + i) * 1.5}\">Unplaced: #{esc.call(id)}</text>" }.join
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 #{canvas_width} #{canvas_height}\" role=\"img\" aria-labelledby=\"title desc\"><title id=\"title\">Porch Parcel #{esc.call(result[:strategy])} shelf</title><desc id=\"desc\">#{occupied} occupied area, #{usable} usable area, margin #{result[:margin]}, #{result[:placed].length} placed parcels, #{result[:unplaced].length} unplaced</desc><style>.shelf{fill:url(#grid);stroke:#744831;stroke-width:.08}.blocked{fill:#6e5c4d;stroke:#3f3027;stroke-width:.03}.parcel{fill:#e97b54;stroke:#4f3225;stroke-width:.04}text{font:0.32px monospace;fill:#3e3026}</style><defs><pattern id=\"grid\" width=\"1\" height=\"1\" patternUnits=\"userSpaceOnUse\"><rect width=\"1\" height=\"1\" fill=\"#e9d3b1\"/><path d=\"M 1 0 L 0 0 0 1\" fill=\"none\" stroke=\"#d7b993\" stroke-width=\".02\"/></pattern></defs><rect class=\"shelf\" x=\"#{pad}\" y=\"#{pad}\" width=\"#{sw}\" height=\"#{sh}\"/>#{blocked}#{parcels}<text x=\"#{pad}\" y=\"#{sh + pad + 0.8}\">Strategy: #{esc.call(result[:strategy])} · Margin: #{result[:margin]} · Occupied: #{occupied} · Usable: #{usable}</text>#{legend}#{unplaced}</svg>"
+  end
+
   def html(result, show_orientation: true)
     esc = ->(text) { CGI.escapeHTML(text.to_s) }
     total = result[:shelf_width] * result[:shelf_height]
@@ -196,7 +206,7 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; margin = 0; html_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; margin = 0; html_path = nil; svg_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
       strategy_explicit = true
@@ -208,12 +218,16 @@ if $PROGRAM_NAME == __FILE__
     if (index = args.index('--html') )
       args.delete_at(index); html_path = args.delete_at(index); raise ArgumentError, '--html needs a path' unless html_path
     end
+    if (index = args.index('--svg') )
+      args.delete_at(index); svg_path = args.delete_at(index); raise ArgumentError, '--svg needs a path' unless svg_path
+    end
     raise ArgumentError, 'unknown flag' if args.any? { |arg| arg.start_with?('--') }
     raise ArgumentError, 'exactly one input path is required' unless args.length == 1
     path = args.first
     raise ArgumentError, 'input file exceeds 1 MiB' if File.size(path) > 1024 * 1024
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
     raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
+    raise ArgumentError, '--svg cannot be combined with --html or --compare' if svg_path && (html_path || compare_mode)
     if compare_mode
       results = PorchParcel.compare(data, rotate: rotate, margin: margin)
       if json then PorchParcel.render_compare_json(results, $stdout) else PorchParcel.render_compare(results, $stdout) end
@@ -224,6 +238,10 @@ if $PROGRAM_NAME == __FILE__
       if html_path
         raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force
         PorchParcel.write_html(html_path, PorchParcel.html(result), force: force)
+      end
+      if svg_path
+        raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(svg_path) && !force
+        PorchParcel.write_html(svg_path, PorchParcel.svg(result), force: force)
       end
     end
   rescue JSON::ParserError, Errno::ENOENT, SystemCallError => error
