@@ -189,6 +189,18 @@ class PorchParcelTest < Minitest::Test
       refute_includes error, '{"shelf_width"'
     end
   end
+  def test_csv_export_has_fixed_quoted_placement_rows
+    data = {'shelf_width' => 2, 'shelf_height' => 1, 'parcels' => [{'id' => 'box-1', 'width' => 1, 'height' => 1}, {'id' => 'too-big', 'width' => 3, 'height' => 1}]}
+    result = PorchParcel.pack(data); output = StringIO.new; PorchParcel.render_csv(result, data, output)
+    rows = CSV.parse(output.string); assert_equal %w[id x y width height rotated status], rows.first; assert_equal ['box-1', '0', '0', '1', '1', 'false', 'placed'], rows[1]; assert_equal ['too-big', '', '', '3', '1', '', 'unplaced'], rows[2]
+    assert output.string.end_with?("\r\n")
+  end
+  def test_cli_csv_rejects_json_compare_and_validate_only
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); File.write(input, JSON.generate('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [])); script = File.expand_path('../app/packer.rb', __dir__)
+      assert_includes `ruby #{script} --csv --json #{input} 2>&1`, 'cannot be combined'; assert_includes `ruby #{script} --csv --compare #{input} 2>&1`, 'cannot be combined'; assert_includes `ruby #{script} --csv --validate-only #{input} 2>&1`, 'cannot be combined'
+    end
+  end
   def test_margin_requires_clear_shelf_boundary_and_separates_parcels
     tight = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 1, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]}, margin: 1)
     assert_equal ['A'], tight[:unplaced]

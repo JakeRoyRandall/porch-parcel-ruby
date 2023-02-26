@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 require 'json'
+require 'csv'
 require 'cgi'
 require 'set'
 
@@ -138,6 +139,17 @@ module PorchParcel
     output.puts JSON.generate(payload)
   end
 
+  def render_csv(result, input_data, output = $stdout)
+    output << CSV.generate_line(%w[id x y width height rotated status], row_sep: "\r\n")
+    result[:placed].each do |placement|
+      output << CSV.generate_line([placement.parcel.id, placement.x, placement.y, placement.width, placement.height, placement.rotated, 'placed'], row_sep: "\r\n")
+    end
+    result[:unplaced].each do |id|
+      raw = input_data['parcels'].find { |parcel| parcel['id'] == id }
+      output << CSV.generate_line([id, '', '', raw['width'], raw['height'], '', 'unplaced'], row_sep: "\r\n")
+    end
+  end
+
   def compare(data, rotate: false, margin: 0, sort: nil)
     %w[first-fit area best-fit].to_h { |strategy| [strategy, pack(data, rotate: rotate, strategy: strategy, margin: margin, sort: sort)] }
   end
@@ -228,7 +240,7 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; margin = 0; html_path = nil; svg_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); csv = !!args.delete('--csv'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; margin = 0; html_path = nil; svg_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
       strategy_explicit = true
@@ -251,6 +263,7 @@ if $PROGRAM_NAME == __FILE__
     path = args.first
     raise ArgumentError, 'input file exceeds 1 MiB' if File.size(path) > 1024 * 1024
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
+    raise ArgumentError, '--csv cannot be combined with --json, --compare, or --validate-only' if csv && (json || compare_mode || validate_mode)
     raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
     raise ArgumentError, '--svg cannot be combined with --html or --compare' if svg_path && (html_path || compare_mode)
     raise ArgumentError, '--validate-only cannot be combined with --strategy, --sort, --compare, --html, --svg, --show-orientation, or --force' if validate_mode && (strategy_explicit || sort || compare_mode || html_path || svg_path || show || force)
@@ -265,7 +278,7 @@ if $PROGRAM_NAME == __FILE__
       PorchParcel.write_html(html_path, PorchParcel.html_compare(results), force: force) if html_path
     else
       result = PorchParcel.pack(data, rotate: rotate, strategy: strategy, margin: margin, sort: sort)
-      if json then PorchParcel.render_json(result, $stdout) else PorchParcel.render(result, $stdout, show_orientation: show) end
+      if json then PorchParcel.render_json(result, $stdout) elsif csv then PorchParcel.render_csv(result, data, $stdout) else PorchParcel.render(result, $stdout, show_orientation: show) end
       if html_path
         raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force
         PorchParcel.write_html(html_path, PorchParcel.html(result), force: force)

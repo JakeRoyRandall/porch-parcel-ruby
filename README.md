@@ -7,7 +7,7 @@ The core accepts integer `shelf_width`, integer `shelf_height`, and up to 30 rec
 Run:
 
 ```sh
-ruby app/packer.rb [--strategy first-fit|area|best-fit] [--sort input|area|long-side] [--compare] [--rotate] [--margin 0..3] [--show-orientation] [--json] [--html report.html] [--svg shelf.svg] [--force] input.json
+ruby app/packer.rb [--strategy first-fit|area|best-fit] [--sort input|area|long-side] [--compare] [--rotate] [--margin 0..3] [--show-orientation] [--json|--csv] [--html report.html] [--svg shelf.svg] [--force] input.json
 ```
 
 Test:
@@ -21,6 +21,8 @@ ruby -Itest test/test_packer.rb
 `--html` writes a standalone warm porch-style shelf report with proportional parcel rectangles, labels, dimensions, orientation, unplaced IDs, occupied/total/usable area, and a visibly striped, accessible marker for each blocked cell. It has no external assets and will not replace an existing report unless `--force` is supplied. Terminal output is still printed as usual.
 
 `--json` replaces the terminal report with one deterministic JSON object containing shelf dimensions, strategy, blocked coordinates, placed parcel geometry and rotation flags, unplaced IDs, occupied area, and usable area. Diagnostics remain on stderr, so stdout can be piped to another tool.
+
+`--csv` replaces the terminal report with CRLF CSV rows using `id,x,y,width,height,rotated,status` columns. It lists placed parcels first and unplaced parcels with blank coordinates/rotation; blocked cells are not rows. CSV is single-run output and cannot be combined with JSON, compare, or validate-only.
 
 `--compare` packs the same input with `first-fit`, `area`, and `best-fit`, then reports occupied area, placed count, unused usable area, and unplaced IDs side by side. Add `--json` for structured comparison or `--html report.html` for three readable shelf panels. It shares rotation and margin options and cannot be combined with `--strategy`.
 
