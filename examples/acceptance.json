@@ -1,0 +1,10 @@
+{
+  "shelf_width": 5,
+  "shelf_height": 3,
+  "blocked": [{"x": 2, "y": 1}],
+  "parcels": [
+    {"id": "tea", "width": 2, "height": 1, "rotatable": false},
+    {"id": "book", "width": 1, "height": 2},
+    {"id": "wide", "width": 4, "height": 2, "rotatable": false}
+  ]
+}

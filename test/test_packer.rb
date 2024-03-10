@@ -221,6 +221,14 @@ class PorchParcelTest < Minitest::Test
       assert_includes `ruby #{script} --min-fill nan #{input} 2>&1`, 'finite and between'
     end
   end
+  def test_cli_max_unplaced_threshold_and_combination
+    Dir.mktmpdir do |dir|
+      input = File.join(dir, 'input.json'); File.write(input, JSON.generate('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => [{'id' => 'fit', 'width' => 1, 'height' => 1}, {'id' => 'wait', 'width' => 2, 'height' => 1}]))
+      script = File.expand_path('../app/packer.rb', __dir__)
+      assert system("ruby #{script} --max-unplaced 1 #{input} > /dev/null"); refute system("ruby #{script} --max-unplaced 0 #{input} > /dev/null"); assert system("ruby #{script} --max-unplaced 1 --min-fill 100 #{input} > /dev/null")
+      assert_includes `ruby #{script} --max-unplaced 31 #{input} 2>&1`, '0 to 30'; assert_includes `ruby #{script} --max-unplaced 1 --compare #{input} 2>&1`, 'cannot be combined'
+    end
+  end
   def test_margin_requires_clear_shelf_boundary_and_separates_parcels
     tight = PorchParcel.pack({'shelf_width' => 3, 'shelf_height' => 1, 'parcels' => [{'id' => 'A', 'width' => 1, 'height' => 1}]}, margin: 1)
     assert_equal ['A'], tight[:unplaced]

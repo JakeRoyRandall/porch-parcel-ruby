@@ -242,7 +242,7 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); csv = !!args.delete('--csv'); unplaced_only = !!args.delete('--unplaced-only'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; min_fill = nil; margin = 0; html_path = nil; svg_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); csv = !!args.delete('--csv'); unplaced_only = !!args.delete('--unplaced-only'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; min_fill = nil; max_unplaced = nil; margin = 0; html_path = nil; svg_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
       strategy_explicit = true
@@ -254,6 +254,10 @@ if $PROGRAM_NAME == __FILE__
       args.delete_at(fill_index); fill_text = args.delete_at(fill_index); raise ArgumentError, '--min-fill needs a value' unless fill_text
       begin min_fill = Float(fill_text); rescue ArgumentError; raise ArgumentError, '--min-fill must be finite and between 0 and 100'; end
       raise ArgumentError, '--min-fill must be finite and between 0 and 100' unless min_fill.finite? && min_fill.between?(0, 100)
+    end
+    if (unplaced_index = args.index('--max-unplaced') )
+      args.delete_at(unplaced_index); count_text = args.delete_at(unplaced_index); raise ArgumentError, '--max-unplaced needs a value' unless count_text
+      raise ArgumentError, '--max-unplaced must be an integer from 0 to 30' unless count_text.match?(/\A\d+\z/); max_unplaced = Integer(count_text, 10); raise ArgumentError, '--max-unplaced must be an integer from 0 to 30' unless max_unplaced.between?(0, 30)
     end
     if (margin_index = args.index('--margin') )
       args.delete_at(margin_index); margin_text = args.delete_at(margin_index); raise ArgumentError, '--margin needs a value' unless margin_text
@@ -273,6 +277,7 @@ if $PROGRAM_NAME == __FILE__
     raise ArgumentError, '--csv cannot be combined with --json, --compare, or --validate-only' if csv && (json || compare_mode || validate_mode)
     raise ArgumentError, '--unplaced-only requires --csv' if unplaced_only && !csv
     raise ArgumentError, '--min-fill cannot be combined with --compare or --validate-only' if min_fill && (compare_mode || validate_mode)
+    raise ArgumentError, '--max-unplaced cannot be combined with --compare or --validate-only' if max_unplaced && (compare_mode || validate_mode)
     raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
     raise ArgumentError, '--svg cannot be combined with --html or --compare' if svg_path && (html_path || compare_mode)
     raise ArgumentError, '--validate-only cannot be combined with --strategy, --sort, --compare, --html, --svg, --show-orientation, or --force' if validate_mode && (strategy_explicit || sort || compare_mode || html_path || svg_path || show || force)
@@ -302,6 +307,7 @@ if $PROGRAM_NAME == __FILE__
         fill_percent = usable.zero? ? 0.0 : occupied * 100.0 / usable
         exit 1 if fill_percent < min_fill
       end
+      exit 1 if max_unplaced && result[:unplaced].length > max_unplaced
     end
   rescue JSON::ParserError, Errno::ENOENT, SystemCallError => error
     warn "Input error: #{error.message}"; exit 2

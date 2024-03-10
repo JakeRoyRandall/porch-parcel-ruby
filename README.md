@@ -7,7 +7,7 @@ The core accepts integer `shelf_width`, integer `shelf_height`, and up to 30 rec
 Run:
 
 ```sh
-ruby app/packer.rb [--strategy first-fit|area|best-fit] [--sort input|area|long-side] [--compare] [--rotate] [--margin 0..3] [--min-fill 0..100] [--show-orientation] [--json|--csv] [--html report.html] [--svg shelf.svg] [--force] input.json
+ruby app/packer.rb [--strategy first-fit|area|best-fit] [--sort input|area|long-side] [--compare] [--rotate] [--margin 0..3] [--min-fill 0..100] [--max-unplaced 0..30] [--show-orientation] [--json|--csv] [--html report.html] [--svg shelf.svg] [--force] input.json
 ```
 
 Test:
@@ -35,3 +35,5 @@ ruby -Itest test/test_packer.rb
 `--margin N` requires N empty shelf cells between each parcel and the shelf boundary, blocked cell, or another parcel; N is an integer from 0 through 3 and defaults to 0. Only the parcel rectangle counts as occupied area. Margin is reported in text, JSON, and HTML output.
 
 `--min-fill PERCENT` is an optional batch acceptance threshold from 0 through 100. Normal output is still produced, then the process exits 1 when placed parcel area divided by usable shelf area falls below the threshold; usable area is total shelf cells minus blocked cells. It is available for a single packing run and cannot be combined with compare or validate-only.
+
+`--max-unplaced COUNT` is an optional single-run acceptance threshold from 0 through 30. Normal output is still produced, then the process exits 1 when more parcels remain unplaced than allowed. It composes with `--min-fill` as a logical AND of acceptance checks and cannot be combined with compare or validate-only. `examples/acceptance.json` demonstrates blocked space and rotation-locked parcels; run `ruby app/packer.rb --rotate --show-orientation examples/acceptance.json`.
