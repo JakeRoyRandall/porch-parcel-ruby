@@ -36,16 +36,18 @@ module PorchParcel
     true
   end
 
-  def pack(data, rotate: false, strategy: 'first-fit', margin: 0)
+  def pack(data, rotate: false, strategy: 'first-fit', margin: 0, sort: nil)
     validate!(data)
     raise ArgumentError, 'strategy must be first-fit, area, or best-fit' unless %w[first-fit area best-fit].include?(strategy)
+    raise ArgumentError, 'sort must be input, area, or long-side' if sort && !%w[input area long-side].include?(sort)
     integer = ->(v) { v.is_a?(Integer) && !v.is_a?(TrueClass) && !v.is_a?(FalseClass) }
     raise ArgumentError, 'margin must be an integer from 0 to 3' unless integer.call(margin) && margin.between?(0, 3)
     shelf = Array.new(data['shelf_height']) { Array.new(data['shelf_width']) }
     blocked_coords = data.fetch('blocked', []).map { |cell| [cell['x'], cell['y']] }
     blocked = blocked_coords.to_set
     placed = []; unplaced = []
-    parcels = data['parcels'].each_with_index.sort_by { |raw, index| strategy == 'area' ? [-(raw['width'] * raw['height']), index] : [index, index] }.map(&:first)
+    ordering = sort || (strategy == 'area' ? 'area' : 'input')
+    parcels = data['parcels'].each_with_index.sort_by { |raw, index| ordering == 'area' ? [-(raw['width'] * raw['height']), index] : ordering == 'long-side' ? [-[raw['width'], raw['height']].max, index] : [index] }.map(&:first)
     parcels.each do |raw|
       parcel = Parcel.new(raw['id'], raw['width'], raw['height'], raw.fetch('rotatable', true)); found = nil; best_score = nil
       (0...data['shelf_height']).each do |y|
@@ -99,11 +101,14 @@ module PorchParcel
         unplaced << parcel.id
       end
     end
-    { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, blocked: blocked_coords, placed: placed, unplaced: unplaced, strategy: strategy, margin: margin }
+    result = { shelf_width: data['shelf_width'], shelf_height: data['shelf_height'], grid: shelf, blocked: blocked_coords, placed: placed, unplaced: unplaced, strategy: strategy, margin: margin }
+    result[:sort] = sort if sort
+    result
   end
 
   def render(result, output = $stdout, show_orientation: false)
     header = "PORCH PARCEL // #{result[:shelf_width]}x#{result[:shelf_height]} shelf // #{result[:strategy]}"
+    header += " // sort #{result[:sort]}" if result[:sort]
     header += " // margin #{result[:margin]}" if result[:margin] > 0
     output.puts header
     result[:grid].each { |row| output.puts row.map { |cell| cell ? '#' : '.' }.join }
@@ -129,11 +134,12 @@ module PorchParcel
       'occupied_area' => result[:placed].sum { |p| p.width * p.height },
       'usable_area' => total - result[:blocked].length
     }
+    payload['sort'] = result[:sort] if result[:sort]
     output.puts JSON.generate(payload)
   end
 
-  def compare(data, rotate: false, margin: 0)
-    %w[first-fit area best-fit].to_h { |strategy| [strategy, pack(data, rotate: rotate, strategy: strategy, margin: margin)] }
+  def compare(data, rotate: false, margin: 0, sort: nil)
+    %w[first-fit area best-fit].to_h { |strategy| [strategy, pack(data, rotate: rotate, strategy: strategy, margin: margin, sort: sort)] }
   end
 
   def validate_only(data, rotate: false, margin: 0)
@@ -147,18 +153,21 @@ module PorchParcel
 
   def render_compare(results, output = $stdout)
     output.puts "PORCH PARCEL // strategy comparison"
-    output.puts "strategy\toccupied\tplaced\tunused-usable\tunplaced"
+    output.puts "strategy\toccupied\tplaced\tunused-usable\tunplaced#{results.values.any? { |result| result[:sort] } ? "\tsort" : ''}"
     results.each do |strategy, result|
       occupied = result[:placed].sum { |p| p.width * p.height }
       unused = result[:shelf_width] * result[:shelf_height] - result[:blocked].length - occupied
-      output.puts "#{strategy}\t#{occupied}\t#{result[:placed].length}\t#{unused}\t#{result[:unplaced].empty? ? 'none' : result[:unplaced].join(',')}"
+      sort_note = result[:sort] ? "\t#{result[:sort]}" : ''
+      output.puts "#{strategy}\t#{occupied}\t#{result[:placed].length}\t#{unused}\t#{result[:unplaced].empty? ? 'none' : result[:unplaced].join(',')}#{sort_note}"
     end
   end
 
   def render_compare_json(results, output = $stdout)
     payload = results.to_h do |strategy, result|
       occupied = result[:placed].sum { |p| p.width * p.height }
-      [strategy, {'occupied_area' => occupied, 'placed_count' => result[:placed].length, 'unused_usable_area' => result[:shelf_width] * result[:shelf_height] - result[:blocked].length - occupied, 'unplaced' => result[:unplaced]}]
+      metrics = {'occupied_area' => occupied, 'placed_count' => result[:placed].length, 'unused_usable_area' => result[:shelf_width] * result[:shelf_height] - result[:blocked].length - occupied, 'unplaced' => result[:unplaced]}
+      metrics['sort'] = result[:sort] if result[:sort]
+      [strategy, metrics]
     end
     output.puts JSON.generate('schema_version' => 1, 'comparison' => payload)
   end
@@ -180,7 +189,8 @@ module PorchParcel
     parcels = result[:placed].map.with_index { |p, i| "<rect class=\"parcel\" x=\"#{p.x + pad}\" y=\"#{p.y + pad}\" width=\"#{p.width}\" height=\"#{p.height}\"/><text x=\"#{p.x + pad + p.width / 2.0}\" y=\"#{p.y + pad + p.height / 2.0}\" text-anchor=\"middle\" dominant-baseline=\"middle\">#{i + 1}</text>" }.join
     legend = result[:placed].map.with_index { |p, i| "<text x=\"#{pad}\" y=\"#{sh + pad + 1.5 + i * 1.5}\">#{i + 1}. #{esc.call(p.parcel.id)} #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}#{p.parcel.rotatable ? '' : ' · rotation locked'} at #{p.x},#{p.y}</text>" }.join
     unplaced = result[:unplaced].map.with_index { |id, i| "<text x=\"#{pad}\" y=\"#{sh + pad + 1.5 + (result[:placed].length + i) * 1.5}\">Unplaced: #{esc.call(id)}</text>" }.join
-    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 #{canvas_width} #{canvas_height}\" role=\"img\" aria-labelledby=\"title desc\"><title id=\"title\">Porch Parcel #{esc.call(result[:strategy])} shelf</title><desc id=\"desc\">#{occupied} occupied area, #{usable} usable area, margin #{result[:margin]}, #{result[:placed].length} placed parcels, #{result[:unplaced].length} unplaced</desc><style>.shelf{fill:url(#grid);stroke:#744831;stroke-width:.08}.blocked{fill:#6e5c4d;stroke:#3f3027;stroke-width:.03}.parcel{fill:#e97b54;stroke:#4f3225;stroke-width:.04}text{font:0.32px monospace;fill:#3e3026}</style><defs><pattern id=\"grid\" width=\"1\" height=\"1\" patternUnits=\"userSpaceOnUse\"><rect width=\"1\" height=\"1\" fill=\"#e9d3b1\"/><path d=\"M 1 0 L 0 0 0 1\" fill=\"none\" stroke=\"#d7b993\" stroke-width=\".02\"/></pattern></defs><rect class=\"shelf\" x=\"#{pad}\" y=\"#{pad}\" width=\"#{sw}\" height=\"#{sh}\"/>#{blocked}#{parcels}<text x=\"#{pad}\" y=\"#{sh + pad + 0.8}\">Strategy: #{esc.call(result[:strategy])} · Margin: #{result[:margin]} · Occupied: #{occupied} · Usable: #{usable}</text>#{legend}#{unplaced}</svg>"
+    sort_caption = result[:sort] ? " · Sort: #{esc.call(result[:sort])}" : ''
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 #{canvas_width} #{canvas_height}\" role=\"img\" aria-labelledby=\"title desc\"><title id=\"title\">Porch Parcel #{esc.call(result[:strategy])} shelf</title><desc id=\"desc\">#{occupied} occupied area, #{usable} usable area, margin #{result[:margin]}, #{result[:placed].length} placed parcels, #{result[:unplaced].length} unplaced</desc><style>.shelf{fill:url(#grid);stroke:#744831;stroke-width:.08}.blocked{fill:#6e5c4d;stroke:#3f3027;stroke-width:.03}.parcel{fill:#e97b54;stroke:#4f3225;stroke-width:.04}text{font:0.32px monospace;fill:#3e3026}</style><defs><pattern id=\"grid\" width=\"1\" height=\"1\" patternUnits=\"userSpaceOnUse\"><rect width=\"1\" height=\"1\" fill=\"#e9d3b1\"/><path d=\"M 1 0 L 0 0 0 1\" fill=\"none\" stroke=\"#d7b993\" stroke-width=\".02\"/></pattern></defs><rect class=\"shelf\" x=\"#{pad}\" y=\"#{pad}\" width=\"#{sw}\" height=\"#{sh}\"/>#{blocked}#{parcels}<text x=\"#{pad}\" y=\"#{sh + pad + 0.8}\">Strategy: #{esc.call(result[:strategy])}#{sort_caption} · Margin: #{result[:margin]} · Occupied: #{occupied} · Usable: #{usable}</text>#{legend}#{unplaced}</svg>"
   end
 
   def html(result, show_orientation: true)
@@ -188,7 +198,8 @@ module PorchParcel
     total = result[:shelf_width] * result[:shelf_height]
     occupied = result[:placed].sum { |p| p.width * p.height }
     usable = total - result[:blocked].length
-    strategy_tag = "<p class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])} · Margin: #{result[:margin]} · Usable area: #{usable}</p>"
+    sort_label = result[:sort] ? " · Sort: #{esc.call(result[:sort])}" : ''
+    strategy_tag = "<p class=\"strategy-label\">Strategy: #{esc.call(result[:strategy])}#{sort_label} · Margin: #{result[:margin]} · Usable area: #{usable}</p>"
     parcels = result[:placed].map.with_index do |p, index|
       label = "#{esc.call(p.parcel.id)} · #{p.width}×#{p.height}#{p.rotated ? ' · rotated' : ''}#{p.parcel.rotatable ? '' : ' · rotation locked'}"
       "<div class=\"parcel\" aria-label=\"#{label}\" style=\"left:#{p.x * 100.0 / result[:shelf_width]}%;top:#{p.y * 100.0 / result[:shelf_height]}%;width:#{p.width * 100.0 / result[:shelf_width]}%;height:#{p.height * 100.0 / result[:shelf_height]}%\"><span>#{index + 1}</span></div>"
@@ -217,10 +228,13 @@ end
 
 if $PROGRAM_NAME == __FILE__
   begin
-    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; margin = 0; html_path = nil; svg_path = nil
+    args = ARGV.dup; rotate = !!args.delete('--rotate'); show = !!args.delete('--show-orientation'); json = !!args.delete('--json'); compare_mode = !!args.delete('--compare'); validate_mode = !!args.delete('--validate-only'); force = !!args.delete('--force'); strategy = 'first-fit'; strategy_explicit = false; sort = nil; margin = 0; html_path = nil; svg_path = nil
     if (strategy_index = args.index('--strategy') )
       args.delete_at(strategy_index); strategy = args.delete_at(strategy_index); raise ArgumentError, '--strategy needs a value' unless strategy
       strategy_explicit = true
+    end
+    if (sort_index = args.index('--sort') )
+      args.delete_at(sort_index); sort = args.delete_at(sort_index); raise ArgumentError, '--sort needs a value' unless sort
     end
     if (margin_index = args.index('--margin') )
       args.delete_at(margin_index); margin_text = args.delete_at(margin_index); raise ArgumentError, '--margin needs a value' unless margin_text
@@ -239,18 +253,18 @@ if $PROGRAM_NAME == __FILE__
     data = JSON.parse(File.read(path, 1024 * 1024 + 1))
     raise ArgumentError, '--compare cannot be combined with --strategy' if compare_mode && strategy_explicit
     raise ArgumentError, '--svg cannot be combined with --html or --compare' if svg_path && (html_path || compare_mode)
-    raise ArgumentError, '--validate-only cannot be combined with --strategy, --compare, --html, --svg, --show-orientation, or --force' if validate_mode && (strategy_explicit || compare_mode || html_path || svg_path || show || force)
+    raise ArgumentError, '--validate-only cannot be combined with --strategy, --sort, --compare, --html, --svg, --show-orientation, or --force' if validate_mode && (strategy_explicit || sort || compare_mode || html_path || svg_path || show || force)
     if validate_mode
       results = PorchParcel.validate_only(data, rotate: rotate, margin: margin)
       if json then puts JSON.generate('valid' => true, 'parcels' => results) else results.each { |parcel| puts "#{parcel['id']}\tfits-alone\t#{parcel['fits_alone'] ? 'yes' : 'no'}" } end
       exit 0
     end
     if compare_mode
-      results = PorchParcel.compare(data, rotate: rotate, margin: margin)
+      results = PorchParcel.compare(data, rotate: rotate, margin: margin, sort: sort)
       if json then PorchParcel.render_compare_json(results, $stdout) else PorchParcel.render_compare(results, $stdout) end
       PorchParcel.write_html(html_path, PorchParcel.html_compare(results), force: force) if html_path
     else
-      result = PorchParcel.pack(data, rotate: rotate, strategy: strategy, margin: margin)
+      result = PorchParcel.pack(data, rotate: rotate, strategy: strategy, margin: margin, sort: sort)
       if json then PorchParcel.render_json(result, $stdout) else PorchParcel.render(result, $stdout, show_orientation: show) end
       if html_path
         raise ArgumentError, 'output exists; use --force to replace it' if File.exist?(html_path) && !force

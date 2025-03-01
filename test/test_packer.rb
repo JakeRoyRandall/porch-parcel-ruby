@@ -52,6 +52,25 @@ class PorchParcelTest < Minitest::Test
     assert_equal 3, first[:placed].length; assert_equal 3, area[:placed].length
     assert_operator area[:placed].sum { |p| p.width * p.height }, :>, first[:placed].sum { |p| p.width * p.height }
   end
+  def test_sort_long_side_changes_order_and_is_stable
+    data = {'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [
+      {'id' => 'small', 'width' => 1, 'height' => 1}, {'id' => 'bar', 'width' => 3, 'height' => 1}, {'id' => 'tie-a', 'width' => 2, 'height' => 2}, {'id' => 'tie-b', 'width' => 2, 'height' => 2}
+    ]}
+    input = PorchParcel.pack(data); sorted = PorchParcel.pack(data, sort: 'long-side')
+    refute_equal input[:placed].map { |p| [p.parcel.id, p.x, p.y] }, sorted[:placed].map { |p| [p.parcel.id, p.x, p.y] }
+    assert_equal sorted[:grid], PorchParcel.pack(data, sort: 'long-side')[:grid]
+  end
+  def test_sort_validation_and_validate_only_rejection
+    data = {'shelf_width' => 2, 'shelf_height' => 1, 'parcels' => []}
+    assert_raises(ArgumentError) { PorchParcel.pack(data, sort: 'random') }
+  end
+  def test_explicit_sort_is_reported_without_changing_strategy_label
+    data = {'shelf_width' => 3, 'shelf_height' => 2, 'parcels' => [{'id' => 'small', 'width' => 1, 'height' => 1}, {'id' => 'bar', 'width' => 3, 'height' => 1}]}
+    result = PorchParcel.pack(data, strategy: 'area', sort: 'input'); assert_equal 'area', result[:strategy]; assert_equal 'input', result[:sort]
+    output = StringIO.new; PorchParcel.render_json(result, output); parsed = JSON.parse(output.string); assert_equal 'area', parsed['strategy']; assert_equal 'input', parsed['sort']
+    default_output = StringIO.new; PorchParcel.render_json(PorchParcel.pack(data, strategy: 'area'), default_output); refute_includes JSON.parse(default_output.string).keys, 'sort'
+    compared = StringIO.new; PorchParcel.render_compare(PorchParcel.compare(data, sort: 'long-side'), compared); header = compared.string.lines[1].chomp; assert_equal 6, header.split("\t").length; compared.string.lines.drop(2).each { |line| assert_equal 6, line.chomp.split("\t").length }
+  end
   def test_exact_edge_fit
     result = PorchParcel.pack('shelf_width' => 4, 'shelf_height' => 2, 'parcels' => [{'id' => 'edge', 'width' => 4, 'height' => 2}])
     assert_empty result[:unplaced]; assert_equal [0, 0], [result[:placed][0].x, result[:placed][0].y]
@@ -91,6 +110,7 @@ class PorchParcelTest < Minitest::Test
       conflict = `ruby #{script} --validate-only --html #{File.join(dir, 'x.html')} #{input} 2>&1`; assert_includes conflict, 'cannot be combined'
       assert_includes `ruby #{script} --validate-only --show-orientation #{input} 2>&1`, 'cannot be combined'
       assert_includes `ruby #{script} --validate-only --force #{input} 2>&1`, 'cannot be combined'
+      assert_includes `ruby #{script} --validate-only --sort area #{input} 2>&1`, 'cannot be combined'
       empty = File.join(dir, 'empty.json'); File.write(empty, JSON.generate('shelf_width' => 1, 'shelf_height' => 1, 'parcels' => []))
       assert_includes `ruby #{script} --validate-only --margin 4 #{empty} 2>&1`, 'margin must be an integer'
     end

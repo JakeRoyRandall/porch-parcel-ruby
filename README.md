@@ -7,7 +7,7 @@ The core accepts integer `shelf_width`, integer `shelf_height`, and up to 30 rec
 Run:
 
 ```sh
-ruby app/packer.rb [--strategy first-fit|area|best-fit] [--compare] [--rotate] [--margin 0..3] [--show-orientation] [--json] [--html report.html] [--svg shelf.svg] [--force] input.json
+ruby app/packer.rb [--strategy first-fit|area|best-fit] [--sort input|area|long-side] [--compare] [--rotate] [--margin 0..3] [--show-orientation] [--json] [--html report.html] [--svg shelf.svg] [--force] input.json
 ```
 
 Test:
@@ -27,5 +27,7 @@ ruby -Itest test/test_packer.rb
 `--svg shelf.svg` writes a standalone scalable shelf diagram for one strategy, with a padded outer canvas, visible shelf grid, blocked cells, parcel markers, an escaped legend, orientation and rotation-lock details, unplaced IDs, and occupied/usable summary. The canvas reserves enough width and height for narrow shelves and long legends. It cannot be combined with `--html` or `--compare`; existing files require `--force`.
 
 `first-fit` is the default and preserves input order. `area` stably sorts parcels by decreasing area before using the same deterministic placement scan. `best-fit` preserves input order but evaluates every valid candidate for each parcel, choosing the smallest contiguous free gap immediately to the right across its rows, then the analogous gap below, then top-left position; the requested margin is excluded from those measured gaps. It is a deterministic packing heuristic without an optimality guarantee. Reports identify the chosen strategy.
+
+`--sort` optionally controls parcel order independently of the placement strategy: `input` preserves the original order, `area` sorts by decreasing rectangle area, and `long-side` sorts by decreasing longest dimension. Ties retain input order. The default strategy-derived ordering is unchanged (`area` strategy still defaults to area ordering), and JSON keeps its existing `strategy` label while adding `sort` only when explicitly requested.
 
 `--margin N` requires N empty shelf cells between each parcel and the shelf boundary, blocked cell, or another parcel; N is an integer from 0 through 3 and defaults to 0. Only the parcel rectangle counts as occupied area. Margin is reported in text, JSON, and HTML output.
